@@ -2,18 +2,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0" stop-color="rgb(6%,62%,58%)"/>
-      <stop offset="1" stop-color="rgb(3%,36%,40%)"/>
+      <stop offset="0" stop-color="#2E8BF0"/>
+      <stop offset="1" stop-color="#1746C8"/>
     </linearGradient>
   </defs>
-  <rect width="1024" height="1024" fill="url(#bg)"/>
-  <g fill="none" stroke="white" stroke-width="43.008" stroke-linecap="round">
-    <rect x="276.48" y="235.52" width="471.04" height="593.92" rx="51.2"/>
-    <line x1="368.64" y1="399.36" x2="655.36" y2="399.36"/>
-    <line x1="368.64" y1="501.76" x2="546.4064" y2="501.76"/>
-    <line x1="368.64" y1="696.3199999999999" x2="655.36" y2="696.3199999999999"/>
-    <polyline points="414.71999999999997,650.2399999999999 368.64,696.3199999999999 414.71999999999997,742.4"/>
-    <polyline points="609.28,650.2399999999999 655.36,696.3199999999999 609.28,742.4"/>
+  <rect width="1024" height="1024" rx="228.0448" fill="url(#bg)"/>
+  <g transform="translate(432.0256,451.9936) rotate(-11.0)">
+    <rect x="-186.0096" y="-224.0" width="372.0192" height="448.0" rx="53.9648" fill="#eaf3fe"/>
+    <rect x="-77.9776" y="-252.00639999999999" width="155.9552" height="56.0128" rx="28.0064" fill="#bcd8f7"/>
   </g>
-  <rect x="419.84000000000003" y="197.12" width="184.32" height="76.8" rx="38.4" fill="white"/>
+  <g transform="translate(576.0,587.9808) rotate(9.0)">
+    <rect x="-186.0096" y="-224.0" width="372.0192" height="448.0" rx="53.9648" fill="#ffffff"/>
+    <rect x="-77.9776" y="-252.00639999999999" width="155.9552" height="56.0128" rx="28.0064" fill="#dcebfc" stroke="#b7d6f6" stroke-width="3.9936"/>
+    <rect x="-124.05760000000001" y="-89.95839999999998" width="248.11520000000002" height="30.0032" rx="15.0016" fill="#bcdafb"/>
+    <rect x="-124.05760000000001" y="-28.006399999999985" width="248.11520000000002" height="30.0032" rx="15.0016" fill="#bcdafb"/>
+    <rect x="-124.05760000000001" y="33.94560000000001" width="163.756032" height="30.0032" rx="15.0016" fill="#bcdafb"/>
+  </g>
 </svg>
