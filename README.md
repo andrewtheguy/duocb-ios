@@ -3,11 +3,19 @@
 iOS peer of [duocb](https://github.com/andrewtheguy/duocb) — P2P clipboard-text
 sharing between two devices you own, over iroh QUIC with nostr-relay discovery.
 
-This app supports **config mode only**: a standing pairing with a shared auth
-token. One device **starts** the pairing (listens and publishes its address),
-the other **joins** (looks it up and dials). Both devices use the same 47-char
-token and different names; compare the displayed token fingerprint on both to
-confirm they match. Quick mode (rotating PIN / manual node id) is desktop-only.
+This app supports **configure mode only**: all of your devices share one
+standing 47-char secret, set up once through a wizard (generate it on the
+first device, import it on every other; compare the fingerprint to confirm
+they match). Each device broadcasts a presence record under a unique identity
+`<name>_<suffix>` — a short name you choose plus a permanent 8-character
+suffix minted on first launch. To pair, **Start a connection** on one device;
+on the other choose **Join another device**, which shows your device list (who
+is hosting, and when each record was last broadcast — no online/offline
+guesswork: relay freshness is unreliable, so nothing is gated on it and the
+iroh dial itself is the liveness check) — tap the device to connect. Any
+listed device can be joined; if it isn't hosting yet the join keeps retrying
+until Start is pressed there. Quick mode (rotating PIN / manual node id) is
+desktop-only.
 
 Received text lands in an in-memory inbox showing only size + CRC + time — it
 reaches the clipboard only via an explicit **Copy**, and is revealed only via
@@ -46,9 +54,14 @@ also runs in the Simulator.
    # edit DEVELOPMENT_TEAM = YOURTEAMID
    ```
 
-3. Run on a device or Simulator. Enter the shared token (or Generate one on
-   the starting device and paste it on the other), set a device name, pick
-   Start or Join.
+3. Run on a device or Simulator. The setup wizard runs on first launch:
+   create the secret (or paste the one from your other device), name this
+   device, and the hub appears. Start a connection on one device; on the
+   other choose Join and tap it in the device list.
+
+The secret lives in the Keychain and stays until you explicitly **Clear
+secret** on the hub. The permanent identity suffix also lives in the Keychain
+(device-only, never synced) and survives clearing the secret.
 
 The xcframework is arm64-only, so pin an arm64 Simulator explicitly when
 building from the CLI:
@@ -97,6 +110,7 @@ process may hold a config file):
 cd ../duocb && cargo run -p duocb -- --config /tmp/duocb-desktop.json
 ```
 
-Desktop: config mode, generate a token, name `mac`, Start. Simulator app:
-paste the token, name `phone`, Join. Fingerprints must match on both sides;
+Desktop: run the setup wizard (generate the secret, name it `mac`). Simulator
+app: import the same secret (fingerprints must match), name it `phone`. Press
+Start on the desktop, then choose Join in the app and tap the `mac_…` row;
 send text both ways and compare the CRC readouts.

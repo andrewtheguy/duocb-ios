@@ -14,7 +14,7 @@ struct SessionView: View {
     var body: some View {
         List {
             statusSection
-            if let error = controller.lastError, controller.phase != .connected {
+            if let error = controller.lastError {
                 Section {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red)
@@ -61,6 +61,16 @@ struct SessionView: View {
                     .frame(width: 10, height: 10)
                 Text(statusText)
             }
+            if let identity = controller.displayIdentity {
+                LabeledContent("This device") {
+                    Text(identity).font(.system(.footnote, design: .monospaced))
+                }
+            }
+            if let joined = controller.joinedPeer {
+                LabeledContent("Joining") {
+                    Text(joined).font(.system(.footnote, design: .monospaced))
+                }
+            }
             if let fingerprint = controller.tokenFingerprint {
                 LabeledContent("Fingerprint") {
                     Text(fingerprint).font(.system(.footnote, design: .monospaced))
@@ -77,13 +87,18 @@ struct SessionView: View {
     private var sendSection: some View {
         Section("Send") {
             Button {
+                // Read the pasteboard at tap time — gating the button on
+                // UIPasteboard state is unreliable (SwiftUI won't re-render
+                // when the pasteboard changes, leaving it stale-disabled).
                 if let text = UIPasteboard.general.string, !text.isEmpty {
                     controller.send(text: text)
+                } else {
+                    controller.lastError = "The clipboard is empty"
                 }
             } label: {
                 Label("Send clipboard", systemImage: "doc.on.clipboard")
             }
-            .disabled(!controller.canSend || !UIPasteboard.general.hasStrings)
+            .disabled(!controller.canSend)
 
             HStack {
                 TextField("Or type text to send…", text: $composeText, axis: .vertical)
