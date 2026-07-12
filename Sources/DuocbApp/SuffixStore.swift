@@ -38,8 +38,10 @@ enum SuffixStore {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
+        // Replace outright on any update failure (see TokenStore.save).
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecItemNotFound {
+        if status != errSecSuccess {
+            SecItemDelete(query as CFDictionary)
             SecItemAdd(query.merging(attributes) { $1 } as CFDictionary, nil)
         }
     }

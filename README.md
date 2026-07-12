@@ -8,10 +8,10 @@ standing 47-char secret, set up once through a wizard (generate it on the
 first device, import it on every other; compare the fingerprint to confirm
 they match). Each device broadcasts a presence record under a unique identity
 `<name>_<suffix>` — a short name you choose plus a permanent 8-character
-suffix minted on first launch — so the home hub shows your device list: who is
-online, who is hosting, when each was last seen. To pair, **Start a
-connection** on one device and tap it in the list on the other. Quick mode
-(rotating PIN / manual node id) is desktop-only.
+suffix minted on first launch. To pair, **Start a connection** on one device;
+on the other choose **Join another device**, which shows your device list (who
+is online, who is hosting, when each was last seen) — tap the hosting device
+to connect. Quick mode (rotating PIN / manual node id) is desktop-only.
 
 Received text lands in an in-memory inbox showing only size + CRC + time — it
 reaches the clipboard only via an explicit **Copy**, and is revealed only via
@@ -52,8 +52,8 @@ also runs in the Simulator.
 
 3. Run on a device or Simulator. The setup wizard runs on first launch:
    create the secret (or paste the one from your other device), name this
-   device, and the hub appears with your device list. Start a connection on
-   one device and tap it in the list on the other to join.
+   device, and the hub appears. Start a connection on one device; on the
+   other choose Join and tap it in the device list.
 
 The secret lives in the Keychain and stays until you explicitly **Clear
 secret** on the hub. The permanent identity suffix also lives in the Keychain
@@ -107,7 +107,6 @@ cd ../duocb && cargo run -p duocb -- --config /tmp/duocb-desktop.json
 ```
 
 Desktop: run the setup wizard (generate the secret, name it `mac`). Simulator
-app: import the same secret (fingerprints must match), name it `phone`. Each
-now shows the other in its device list. Press Start on the desktop, then tap
-the `mac_…` row in the app to join; send text both ways and compare the CRC
-readouts.
+app: import the same secret (fingerprints must match), name it `phone`. Press
+Start on the desktop, then choose Join in the app and tap the `mac_…` row;
+send text both ways and compare the CRC readouts.

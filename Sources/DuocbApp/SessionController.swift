@@ -96,6 +96,9 @@ final class SessionController {
     private var pendingOutbox: String?
     /// When the last peer fetch was requested (auto-refresh throttle).
     private var lastPeerRequestAt: Date?
+    /// Whether the device picker (JoinView) is on screen; the peer list is
+    /// only kept fresh while it is.
+    private var peerListVisible = false
     /// The last session start, for Reconnect after a failure.
     private(set) var lastSession: (role: Role, peer: String?)?
 
@@ -237,6 +240,17 @@ final class SessionController {
         guard let handle else { return }
         lastPeerRequestAt = .now
         _ = duocb_refresh_peers(handle)
+    }
+
+    /// Track whether the device picker is on screen. Entering it refreshes
+    /// the list right away (unless a fetch just went out); leaving it stops
+    /// the 30 s auto-refresh.
+    func setPeerListVisible(_ visible: Bool) {
+        peerListVisible = visible
+        if visible, currentRole == .hub,
+           Date.now.timeIntervalSince(lastPeerRequestAt ?? .distantPast) > 5 {
+            refreshPeers()
+        }
     }
 
     /// Recover from a hub failure: restart the hub if it died, otherwise just
@@ -411,10 +425,10 @@ final class SessionController {
         autoRefreshPeers()
     }
 
-    /// While the hub is on screen, keep the device list fresh (desktop parity:
-    /// refresh every 30 s while the hub is visible).
+    /// While the device picker is on screen, keep the list fresh (desktop
+    /// parity: refresh every 30 s while visible).
     private func autoRefreshPeers() {
-        guard currentRole == .hub, handle != nil,
+        guard currentRole == .hub, handle != nil, peerListVisible,
               Date.now.timeIntervalSince(lastPeerRequestAt ?? .distantPast) > Self.peerRefreshInterval
         else { return }
         refreshPeers()

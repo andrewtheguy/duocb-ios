@@ -12,6 +12,8 @@ struct ConfigureView: View {
         case importSecret
         case name
         case hub
+        /// The device picker, shown only after choosing Join on the hub.
+        case join
     }
 
     @Environment(SessionController.self) private var controller
@@ -31,6 +33,8 @@ struct ConfigureView: View {
                 NameDeviceView(step: stepBinding)
             case .hub:
                 HubView(step: stepBinding)
+            case .join:
+                JoinView(step: stepBinding)
             }
         }
         .navigationTitle("duocb")

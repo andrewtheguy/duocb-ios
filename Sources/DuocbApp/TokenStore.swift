@@ -31,8 +31,13 @@ enum TokenStore {
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
 
+        // Any update failure (not just "not found" — e.g. an existing item
+        // whose attributes can't be changed in place) falls back to replacing
+        // the item outright: a silent failure here would leave a stale secret
+        // that resurfaces on the next launch.
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecItemNotFound {
+        if status != errSecSuccess {
+            SecItemDelete(query as CFDictionary)
             SecItemAdd(query.merging(attributes) { $1 } as CFDictionary, nil)
         }
     }

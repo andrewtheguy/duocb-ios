@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// The configured home hub: this device's identity, the discovered device
-/// list, and the two actions — host a connection or join a hosting device by
-/// tapping it. While this screen is up, a hub runtime instance broadcasts
-/// presence and keeps the list fresh (pull to refresh; auto-refresh every
-/// 30 s).
+/// The configured home hub: this device's identity and the two actions —
+/// **Start a connection** (host; needs nothing but this device) or **Join
+/// another device**, which opens the device picker (JoinView). While this
+/// screen is up, a hub runtime instance broadcasts presence; the peer list is
+/// only fetched while the picker is visible.
 struct HubView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: ConfigureView.Step
@@ -14,10 +14,8 @@ struct HubView: View {
         List {
             failureSections
             identitySection
-            devicesSection
             actionsSection
         }
-        .refreshable { controller.refreshPeers() }
         .onAppear { controller.startHub() }
         .confirmationDialog(
             "Clear the shared secret?",
@@ -110,6 +108,63 @@ struct HubView: View {
         }
     }
 
+    private var actionsSection: some View {
+        Section {
+            Button {
+                controller.startHosting()
+            } label: {
+                Label("Start a connection", systemImage: "antenna.radiowaves.left.and.right")
+            }
+            Button {
+                step = .join
+            } label: {
+                Label("Join another device", systemImage: "personalhotspot")
+            }
+        } header: {
+            Text("Pair")
+        } footer: {
+            Text("""
+                Start makes this device host the connection — the other device \
+                joins it. Join shows your other devices and connects to the one \
+                that started.
+                """)
+        }
+    }
+}
+
+/// The device picker: the list of your other devices, shown only when the
+/// user chose Join. Tap a hosting device to connect to it. The list refreshes
+/// on entry, by pull, and every 30 s while visible.
+struct JoinView: View {
+    @Environment(SessionController.self) private var controller
+    @Binding var step: ConfigureView.Step
+
+    var body: some View {
+        List {
+            if let hubError = controller.hubError {
+                Section {
+                    Label(hubError, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .font(.footnote)
+                    Button("Retry") { controller.retryHub() }
+                        .buttonStyle(.borderless)
+                }
+            }
+            devicesSection
+            Section {
+                Button("Back", role: .cancel) { step = .hub }
+            }
+        }
+        .refreshable { controller.refreshPeers() }
+        .onAppear {
+            // The picker may be reached with no hub running yet (e.g. straight
+            // after a session ended); make sure presence + fetching are up.
+            controller.startHub()
+            controller.setPeerListVisible(true)
+        }
+        .onDisappear { controller.setPeerListVisible(false) }
+    }
+
     private var devicesSection: some View {
         Section {
             if controller.peers.isEmpty {
@@ -140,7 +195,10 @@ struct HubView: View {
                 }
             }
         } footer: {
-            Text("Tap a device marked “hosting” to join it. Pull down to refresh.")
+            Text("""
+                Tap a device marked “hosting” to join it — press Start there \
+                first. Pull down to refresh.
+                """)
         }
     }
 
@@ -173,20 +231,5 @@ struct HubView: View {
         }
         parts.append(peer.online ? "online" : "last seen \(peer.lastSeenText)")
         return parts.joined(separator: " · ")
-    }
-
-    private var actionsSection: some View {
-        Section {
-            Button {
-                controller.startHosting()
-            } label: {
-                Label("Start a connection", systemImage: "antenna.radiowaves.left.and.right")
-            }
-        } footer: {
-            Text("""
-                Start here, then pick this device from the list on the other \
-                one — or the other way round.
-                """)
-        }
     }
 }
