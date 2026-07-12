@@ -8,8 +8,14 @@ import UniformTypeIdentifiers
 struct SetupView: View {
     @Environment(SessionController.self) private var controller
 
+    // Token and name are drafts: edits persist only at the commit points
+    // (start role right before starting, join role on the first successful
+    // pairing — see SessionController), never from typing alone. The role
+    // picker is a mode switch, not identity, so it may stay @AppStorage.
     @State private var token: String = TokenStore.load() ?? ""
-    @AppStorage("myName") private var myName = SetupView.defaultDeviceName()
+    @State private var myName: String =
+        UserDefaults.standard.string(forKey: SessionController.myNameKey)
+            ?? SetupView.defaultDeviceName()
     @AppStorage("role") private var roleRaw = SessionController.Role.start.rawValue
 
     private var role: SessionController.Role {
@@ -49,45 +55,56 @@ struct SetupView: View {
                     : "This device looks the other one up and dials it.")
             }
 
-            // Mirrors the desktop forms: the starting device never renders the
-            // token — masked display + explicit Copy to hand it to the joiner —
-            // and the joining device enters it through a masked field.
+            // Mirrors the desktop forms: both roles enter the token through a
+            // masked field that never renders it. The starting device reuses an
+            // existing token (saved, or pasted from wherever it is kept) or
+            // generates a fresh one, and hands it to the joiner via explicit
+            // Copy.
             if role == .start {
                 Section {
-                    if !token.isEmpty && tokenError == nil {
-                        LabeledContent("Token") {
-                            HStack {
-                                Text(String(repeating: "•", count: 12))
-                                    .font(.system(.footnote, design: .monospaced))
-                                Button("Copy") {
-                                    UIPasteboard.general.setItems(
-                                        [[UTType.utf8PlainText.identifier: token]],
-                                        options: [
-                                            .localOnly: true,
-                                            .expirationDate: Date.now.addingTimeInterval(5 * 60),
-                                        ]
-                                    )
-                                }
-                                    .buttonStyle(.borderless)
-                            }
-                        }
-                        if let fingerprint = SessionController.tokenFingerprint(token) {
-                            LabeledContent("Fingerprint") {
-                                Text(fingerprint).font(.system(.footnote, design: .monospaced))
-                            }
-                        }
-                    } else if !token.isEmpty {
-                        Text("The saved token is invalid; generate a new one")
+                    SecureField("Existing token, or generate one below", text: $token)
+                        .font(.system(.footnote, design: .monospaced))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    if let tokenError {
+                        Text(tokenError)
                             .font(.footnote)
                             .foregroundStyle(.red)
+                    } else if let fingerprint = SessionController.tokenFingerprint(token) {
+                        LabeledContent("Fingerprint") {
+                            Text(fingerprint).font(.system(.footnote, design: .monospaced))
+                        }
                     }
-                    Button(token.isEmpty || tokenError != nil ? "Generate token" : "Generate new token") {
-                        token = SessionController.generateToken()
+                    HStack {
+                        Button(token.isEmpty || tokenError != nil ? "Generate token" : "Generate new token") {
+                            token = SessionController.generateToken()
+                        }
+                        .buttonStyle(.borderless)
+                        Spacer()
+                        Button("Paste") {
+                            if let pasted = UIPasteboard.general.string {
+                                token = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(!UIPasteboard.general.hasStrings)
+                        if !token.isEmpty && tokenError == nil {
+                            Button("Copy") {
+                                UIPasteboard.general.setItems(
+                                    [[UTType.utf8PlainText.identifier: token]],
+                                    options: [
+                                        .localOnly: true,
+                                        .expirationDate: Date.now.addingTimeInterval(5 * 60),
+                                    ]
+                                )
+                            }
+                            .buttonStyle(.borderless)
+                        }
                     }
                 } header: {
                     Text("Shared token")
                 } footer: {
-                    Text("Use Copy to transfer the token to the joining device. Token and name are saved automatically when you start.")
+                    Text("Use an existing token or generate a new one; Copy transfers it to the joining device. Token and name are saved automatically when you start.")
                 }
             } else {
                 Section {

@@ -7,9 +7,10 @@ import Observation
 /// The Rust side runs its own embedded tokio runtime (see ../duocb
 /// crates/duocb-ffi); Swift drives it with synchronous C calls and drains
 /// JSON events via `duocb_next_event`. Persistence mirrors the desktop policy:
-/// the start role saves the token to the Keychain *before* starting, the join
-/// role only after the first successful pairing (`peer_paired`), so a failed
-/// join never overwrites a good token.
+/// the start role saves the token (Keychain) and name (UserDefaults) *before*
+/// starting, the join role only after the first successful pairing
+/// (`peer_paired`), so editing the form or a failed join never overwrites a
+/// good saved identity.
 @Observable @MainActor
 final class SessionController {
     enum Phase: Equatable {
@@ -41,6 +42,11 @@ final class SessionController {
     private(set) var outbox: ClipItem?
     /// Last error message, shown as a banner; errors are not always fatal.
     var lastError: String?
+
+    /// UserDefaults key for this device's saved name; written only at the
+    /// token-persistence commit points, read by SetupView as the draft's
+    /// initial value.
+    static let myNameKey = "myName"
 
     /// Max retained inbox items (matches desktop MAX_INBOX_ITEMS).
     private static let maxInboxItems = 5
@@ -113,10 +119,12 @@ final class SessionController {
         lastError = nil
         lastSettings = (role, token, name)
 
-        // Desktop parity: the initiator persists the token before starting;
-        // the connector persists only after peer_paired (see apply(event:)).
+        // Desktop parity: the initiator persists the token and name before
+        // starting; the connector persists only after peer_paired (see
+        // apply(event:)).
         if role == .start {
             TokenStore.save(token)
+            UserDefaults.standard.set(name, forKey: Self.myNameKey)
         }
 
         let config: [String: Any] = ["role": role.rawValue, "token": token, "name": name]
@@ -287,10 +295,11 @@ final class SessionController {
         case "peer_paired":
             peerNodeID = object["peer_node_id"] as? String
             lastError = nil
-            // Desktop parity: the connector persists the token only once a
-            // pairing actually succeeded.
-            if lastSettings?.role == .join, let token = lastSettings?.token {
-                TokenStore.save(token)
+            // Desktop parity: the connector persists the token and name only
+            // once a pairing actually succeeded.
+            if let settings = lastSettings, settings.role == .join {
+                TokenStore.save(settings.token)
+                UserDefaults.standard.set(settings.name, forKey: Self.myNameKey)
             }
 
         case "peer_disconnected":

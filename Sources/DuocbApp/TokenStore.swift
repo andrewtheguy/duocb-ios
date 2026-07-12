@@ -3,7 +3,8 @@ import Security
 
 /// Stores the shared auth token in the iOS Keychain — encrypted, OS-managed
 /// storage for the one real secret in the app. Everything else (device name,
-/// role) is non-sensitive and lives in UserDefaults via @AppStorage.
+/// role) is non-sensitive and lives in UserDefaults; the name is written only
+/// at the same commit points as the token (see SessionController).
 ///
 /// Accessibility is `…AfterFirstUnlockThisDeviceOnly`: readable after the first
 /// unlock following a boot (so it survives backgrounding), never synced to

@@ -5,4 +5,4 @@
 - minimum iOS 17 (SwiftUI + @Observable; no WebView, no Network Extension, no background modes — v1 is foreground-first)
 - regenerate the project from project.yml after file additions/renames (`xcodegen generate`)
 - build/verify with an arm64 simulator pinned, e.g. `xcodebuild -project Duocb.xcodeproj -scheme DuocbApp -destination 'platform=iOS Simulator,name=iPhone 17' build` — libduocb.xcframework is arm64-only, so a generic `-sdk iphonesimulator` destination picks x86_64 and fails to link
-- persistence policy mirrors desktop: the auth token lives in the Keychain (TokenStore); start role saves it before starting, join role only on the first peer_paired; name/role live in @AppStorage
+- persistence policy mirrors desktop: the auth token lives in the Keychain (TokenStore) and the device name in UserDefaults, both written only at the commit points — start role saves before starting, join role only on the first peer_paired; editing the setup form alone never persists. Only the role picker is @AppStorage
