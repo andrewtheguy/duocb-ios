@@ -61,6 +61,16 @@ struct SessionView: View {
                     .frame(width: 10, height: 10)
                 Text(statusText)
             }
+            if let identity = controller.displayIdentity {
+                LabeledContent("This device") {
+                    Text(identity).font(.system(.footnote, design: .monospaced))
+                }
+            }
+            if let joined = controller.joinedPeer {
+                LabeledContent("Joining") {
+                    Text(joined).font(.system(.footnote, design: .monospaced))
+                }
+            }
             if let fingerprint = controller.tokenFingerprint {
                 LabeledContent("Fingerprint") {
                     Text(fingerprint).font(.system(.footnote, design: .monospaced))
