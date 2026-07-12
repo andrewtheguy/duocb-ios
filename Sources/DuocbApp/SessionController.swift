@@ -296,6 +296,13 @@ final class SessionController {
 
         case "item_received":
             if let text = object["text"] as? String {
+                // pulled=true is a resume re-delivery of the peer's latest sent
+                // item; it may duplicate content received before the connection
+                // dropped — skip it if the inbox already holds that text.
+                let pulled = object["pulled"] as? Bool ?? false
+                if pulled && inbox.contains(where: { $0.text == text }) {
+                    break
+                }
                 inbox.insert(ClipItem(text: text), at: 0)
                 if inbox.count > Self.maxInboxItems {
                     inbox.removeLast(inbox.count - Self.maxInboxItems)
