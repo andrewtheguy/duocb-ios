@@ -44,9 +44,12 @@ final class SessionController {
 
     /// Max retained inbox items (matches desktop MAX_INBOX_ITEMS).
     private static let maxInboxItems = 5
+    /// The FFI contract guarantees that every JSON event fits in 2 MiB.
+    private static let maxEventBufferSize = 2 * 1024 * 1024
 
     private var handle: OpaquePointer?
     private var pollTimer: Timer?
+    private var eventBuffer = [CChar](repeating: 0, count: 64 * 1024)
     /// The one in-flight send (desktop parity: one outbox slot), promoted to
     /// `outbox` when the runtime confirms with `item_sent`.
     private var pendingOutbox: String?
@@ -217,16 +220,23 @@ final class SessionController {
 
     private func drainEvents() {
         guard let handle else { return }
-        // Clip items cap at 1 MiB on the wire; 2 MiB always fits the JSON.
-        var buf = [CChar](repeating: 0, count: 2 * 1024 * 1024)
         while true {
-            let rc = duocb_next_event(handle, &buf, buf.count)
+            let rc = eventBuffer.withUnsafeMutableBufferPointer {
+                duocb_next_event(handle, $0.baseAddress, $0.count)
+            }
             if rc == -2 {
-                buf = [CChar](repeating: 0, count: buf.count * 2)
+                guard eventBuffer.count < Self.maxEventBufferSize else {
+                    fail("Received an event larger than the 2 MiB limit")
+                    return
+                }
+                eventBuffer = [CChar](
+                    repeating: 0,
+                    count: min(eventBuffer.count * 2, Self.maxEventBufferSize)
+                )
                 continue
             }
             guard rc == 1 else { break }
-            guard let data = String(cString: buf).data(using: .utf8),
+            guard let data = String(cString: eventBuffer).data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let type = object["type"] as? String
             else { continue }

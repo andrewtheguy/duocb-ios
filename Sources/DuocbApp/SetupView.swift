@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Config-mode setup: the shared auth token, this device's name, and whether
 /// this device starts the pairing (listens) or joins it (dials). Both devices
@@ -58,7 +59,15 @@ struct SetupView: View {
                             HStack {
                                 Text(String(repeating: "•", count: 12))
                                     .font(.system(.footnote, design: .monospaced))
-                                Button("Copy") { UIPasteboard.general.string = token }
+                                Button("Copy") {
+                                    UIPasteboard.general.setItems(
+                                        [[UTType.utf8PlainText.identifier: token]],
+                                        options: [
+                                            .localOnly: true,
+                                            .expirationDate: Date.now.addingTimeInterval(5 * 60),
+                                        ]
+                                    )
+                                }
                                     .buttonStyle(.borderless)
                             }
                         }
