@@ -132,7 +132,7 @@ struct HubView: View {
 }
 
 /// The device picker: the list of your other devices, shown only when the
-/// user chose Join. Tap a hosting device to connect to it. The list refreshes
+/// user chose Join. Tap a device to connect to it. The list refreshes
 /// on entry, by pull, and every 30 s while visible.
 struct JoinView: View {
     @Environment(SessionController.self) private var controller
@@ -218,11 +218,6 @@ struct JoinView: View {
     /// The record's age, not an online/offline verdict — relay timing is too
     /// unreliable for one, and joining never requires it.
     private func peerSubtitle(_ peer: PeerInfo) -> String {
-        var parts: [String] = []
-        if peer.hosting {
-            parts.append("hosting")
-        }
-        parts.append("seen \(peer.lastSeenText)")
-        return parts.joined(separator: " · ")
+        "seen \(peer.lastSeenText)"
     }
 }
