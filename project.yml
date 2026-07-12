@@ -1,0 +1,100 @@
+# XcodeGen spec for the duocb iOS app.
+#
+# Generate the Xcode project with:   xcodegen generate
+# Then open Duocb.xcodeproj, select your signing Team, and run.
+#
+# The app is the iOS peer of the desktop duocb clipboard-sharing app,
+# supporting config/token mode only (start or join a standing pairing with a
+# shared auth token). The networking runs in-process (iroh QUIC + nostr
+# signaling from the Rust core) — no Network Extension, no special
+# entitlement, no paid Apple Developer account required; it also runs in the
+# Simulator.
+#
+# The Rust static library + header come from the local Swift package in
+# Packages/Duocb — a binary target that downloads the pinned release zip by
+# URL+checksum, or a local build for FFI dev. See the `packages:` section
+# below and Packages/Duocb/Package.swift.
+name: Duocb
+
+options:
+  bundleIdPrefix: com.andrewtheguy.duocb
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+# Per-developer signing lives in the gitignored Developer.local.xcconfig. Copy
+# Developer.local.xcconfig.sample and set DEVELOPMENT_TEAM so Xcode/xcodebuild
+# builds sign automatically.
+configFiles:
+  Debug: Developer.xcconfig
+  Release: Developer.xcconfig
+
+packages:
+  # Local package (Packages/Duocb) whose binary target downloads the pinned
+  # release zip by URL+checksum (reproducible), or links a local build when
+  # DUOCB_LOCAL_XCFRAMEWORK is set (FFI dev). No vendored copy, no fetch script.
+  Duocb:
+    path: Packages/Duocb
+
+schemes:
+  DuocbApp:
+    build:
+      targets:
+        DuocbApp: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
+settings:
+  base:
+    # DEVELOPMENT_TEAM comes from Developer.xcconfig (see configFiles above),
+    # which #include?s the gitignored per-developer Developer.local.xcconfig.
+    # Not set here: a build setting would override the xcconfig value.
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  DuocbApp:
+    type: application
+    platform: iOS
+    sources:
+      - Sources/DuocbApp
+    dependencies:
+      # Static-library XCFramework delivered via the sibling's Swift package
+      # binary target (downloads the pinned release zip by URL+checksum). Xcode
+      # links whichever slice matches the selected destination.
+      - package: Duocb
+        product: libduocb
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.andrewtheguy.duocb
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: Sources/DuocbApp/DuocbApp.entitlements
+        INFOPLIST_FILE: Sources/DuocbApp/Info.plist
+        MARKETING_VERSION: "0.0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/DuocbApp/Bridging-Header.h
+        # No HEADER_SEARCH_PATHS needed: SPM puts the binary target's embedded
+        # Headers/ dir on the consumer's search path, so the bridging header's
+        # `#import "duocb.h"` resolves automatically. The Rust lib comes from
+        # the package binary target; here we only add its system dependencies.
+        OTHER_LDFLAGS:
+          - $(inherited)
+          - -lresolv
+          - -lc++
+          - -framework
+          - Security
+          - -framework
+          - SystemConfiguration
+          # iroh's netdev dependency uses Network.framework (nw_path_*) on iOS.
+          - -framework
+          - Network

@@ -1,0 +1,8 @@
+- purpose: iOS peer of the desktop duocb clipboard-sharing app — config/token mode only (start/join a standing pairing with a shared 47-char token); quick mode (PIN / manual) is desktop-only and must not be added here
+- strict no backward compatibility
+- make changes on the sibling project ../duocb (the Rust core + FFI used by this app) if needed
+- the Rust artifact (libduocb.xcframework) is delivered via a local Swift package `Packages/Duocb/Package.swift` (referenced by local path in project.yml); its binary target downloads the pinned release zip by URL+checksum (SPM auto-exposes the embedded duocb.h to the bridging header, so no vendor/ dir and no HEADER_SEARCH_PATHS). Bump to a new release with `scripts/bump-xcframework.sh <tag>`. For FFI dev against a local Rust build, run `./build-ios.sh` in ../duocb then set `DUOCB_LOCAL_XCFRAMEWORK=1` for both `xcodegen generate` and `xcodebuild` — SPM forbids binary paths outside the package root, so the sibling's dist/ios is reached via the committed symlink `Packages/Duocb/local/libduocb.xcframework`
+- minimum iOS 17 (SwiftUI + @Observable; no WebView, no Network Extension, no background modes — v1 is foreground-first)
+- regenerate the project from project.yml after file additions/renames (`xcodegen generate`)
+- build/verify with an arm64 simulator pinned, e.g. `xcodebuild -project Duocb.xcodeproj -scheme DuocbApp -destination 'platform=iOS Simulator,name=iPhone 17' build` — libduocb.xcframework is arm64-only, so a generic `-sdk iphonesimulator` destination picks x86_64 and fails to link
+- persistence policy mirrors desktop: the auth token lives in the Keychain (TokenStore); start role saves it before starting, join role only on the first peer_paired; name/role live in @AppStorage
