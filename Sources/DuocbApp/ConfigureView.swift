@@ -108,9 +108,7 @@ private struct SecretGenerateView: View {
                             .font(.system(.footnote, design: .monospaced))
                     }
                 }
-                Button("Copy secret") {
-                    copySecret(token)
-                }
+                CopySecretButton(secret: token)
             } header: {
                 Text("Your new secret")
             } footer: {
@@ -284,4 +282,23 @@ func copySecret(_ token: String) {
             .expirationDate: Date.now.addingTimeInterval(5 * 60),
         ]
     )
+}
+
+/// A "Copy secret" button that acknowledges the tap: it reads "✔ Copied" for a
+/// couple of seconds after copying.
+struct CopySecretButton: View {
+    let secret: String
+    @State private var copied = false
+
+    var body: some View {
+        Button(copied ? "✔ Copied" : "Copy secret") {
+            copySecret(secret)
+            copied = true
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                copied = false
+            }
+        }
+        .buttonStyle(.borderless)
+    }
 }

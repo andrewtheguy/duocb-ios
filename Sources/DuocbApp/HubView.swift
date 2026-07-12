@@ -91,8 +91,7 @@ struct HubView: View {
                             .font(.system(.footnote, design: .monospaced))
                     }
                 }
-                Button("Copy secret") { copySecret(secret) }
-                    .buttonStyle(.borderless)
+                CopySecretButton(secret: secret)
             }
             Button("Rename this device") { step = .name }
                 .buttonStyle(.borderless)
@@ -175,13 +174,9 @@ struct JoinView: View {
                     .font(.footnote)
             }
             ForEach(controller.peers) { peer in
-                if peer.hosting {
-                    Button {
-                        controller.join(peerDisplay: peer.display)
-                    } label: {
-                        peerRow(peer)
-                    }
-                } else {
+                Button {
+                    controller.join(peerDisplay: peer.display)
+                } label: {
                     peerRow(peer)
                 }
             }
@@ -196,17 +191,15 @@ struct JoinView: View {
             }
         } footer: {
             Text("""
-                Tap a device marked “hosting” to join it — press Start there \
-                first. Pull down to refresh.
+                Tap a device to join it. If it isn't hosting yet, press Start \
+                there — the join keeps retrying until it is. Pull down to \
+                refresh.
                 """)
         }
     }
 
     private func peerRow(_ peer: PeerInfo) -> some View {
         HStack {
-            Circle()
-                .fill(peer.online ? Color.green : Color.gray.opacity(0.5))
-                .frame(width: 10, height: 10)
             VStack(alignment: .leading, spacing: 2) {
                 Text(peer.display)
                     .font(.system(.callout, design: .monospaced))
@@ -216,20 +209,20 @@ struct JoinView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if peer.hosting {
-                Text("Join")
-                    .font(.callout)
-                    .foregroundStyle(.tint)
-            }
+            Text("Join")
+                .font(.callout)
+                .foregroundStyle(.tint)
         }
     }
 
+    /// The record's age, not an online/offline verdict — relay timing is too
+    /// unreliable for one, and joining never requires it.
     private func peerSubtitle(_ peer: PeerInfo) -> String {
         var parts: [String] = []
         if peer.hosting {
             parts.append("hosting")
         }
-        parts.append(peer.online ? "online" : "last seen \(peer.lastSeenText)")
+        parts.append("seen \(peer.lastSeenText)")
         return parts.joined(separator: " · ")
     }
 }

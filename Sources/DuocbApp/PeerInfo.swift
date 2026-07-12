@@ -8,10 +8,11 @@ struct PeerInfo: Identifiable, Equatable {
     let display: String
     let name: String
     let suffix: String
-    /// The peer's presence record carries a node id — it can be joined.
+    /// The peer's presence record carries a node id — it can be joined. No
+    /// freshness gate: relay timing is too unreliable for an online/offline
+    /// verdict, so any hosting peer is joinable and the iroh dial is the
+    /// actual liveness check.
     let hosting: Bool
-    /// Seen within the presence online window (a few minutes).
-    let online: Bool
     let lastSeenUnix: UInt64
 
     var id: String { suffix }
@@ -41,7 +42,6 @@ struct PeerInfo: Identifiable, Equatable {
                 name: name,
                 suffix: suffix,
                 hosting: peer["hosting"] as? Bool ?? false,
-                online: peer["online"] as? Bool ?? false,
                 lastSeenUnix: (peer["last_seen_unix"] as? NSNumber)?.uint64Value ?? 0
             )
         }

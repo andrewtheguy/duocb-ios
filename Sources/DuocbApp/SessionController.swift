@@ -89,6 +89,10 @@ final class SessionController {
 
     private var handle: OpaquePointer?
     private var currentRole: Role?
+    /// True while an old runtime instance is still shutting down off-thread;
+    /// the FFI allows one instance per process, so new starts wait for the
+    /// teardown completion instead of racing it.
+    private var stopping = false
     private var pollTimer: Timer?
     private var eventBuffer = [CChar](repeating: 0, count: 64 * 1024)
     /// The one in-flight send (desktop parity: one outbox slot), promoted to
@@ -201,17 +205,14 @@ final class SessionController {
         UserDefaults.standard.set(name, forKey: Self.myNameKey)
         deviceName = name
         if currentRole == .hub {
-            teardown()
-            startHub()
+            teardown { [weak self] in self?.startHub() }
         }
     }
 
     /// Clear the standing secret (an explicit, confirmed action). The suffix
     /// is permanent and the name is kept as a prefill for the next setup.
     func clearSecret() {
-        if currentRole == .hub {
-            teardown()
-        }
+        teardown {}
         TokenStore.clear()
         secret = nil
         peers = []
@@ -225,9 +226,10 @@ final class SessionController {
     // MARK: - Hub lifecycle
 
     /// Run the hub instance (presence broadcast + peer list) while the hub
-    /// screen is visible. No-op when any instance is already running.
+    /// screen is visible. No-op when any instance is already running or an
+    /// old one is still shutting down (its teardown completion restarts us).
     func startHub() {
-        guard handle == nil, hasIdentity else { return }
+        guard handle == nil, !stopping, hasIdentity else { return }
         presenceConflict = nil
         hubError = nil
         guard startRuntime(role: .hub, peer: nil) else { return }
@@ -278,12 +280,16 @@ final class SessionController {
     }
 
     private func startSession(role: Role, peer: String?) {
-        teardown() // stops the hub (or a previous session)
-        phase = .idle
+        guard !stopping else { return } // a transition is already in flight
         lastError = nil
         lastSession = (role, peer)
-        guard startRuntime(role: role, peer: peer) else { return }
+        // Instant feedback; the runtime's own status events take over once the
+        // old instance (hub or previous session) has wound down off-thread.
         phase = .starting
+        teardown { [weak self] in
+            guard let self else { return }
+            _ = self.startRuntime(role: role, peer: peer)
+        }
     }
 
     /// Re-run the last session after a failure (offered on the hub).
@@ -294,9 +300,9 @@ final class SessionController {
 
     /// Stop the session and return to the hub.
     func stop() {
-        teardown()
         phase = .idle
         lastError = nil
+        teardown { [weak self] in self?.startHub() }
     }
 
     /// Dismiss a failure banner without reconnecting.
@@ -361,13 +367,13 @@ final class SessionController {
         }
     }
 
-    private func teardown() {
+    /// Release the current instance and run `next` once it has actually shut
+    /// down. duocb_stop performs a graceful runtime shutdown — normally fast,
+    /// but up to a few seconds with a live session — so it runs off the main
+    /// thread; blocking here was what made Start/Join/Stop feel frozen.
+    private func teardown(then next: @escaping () -> Void) {
         pollTimer?.invalidate()
         pollTimer = nil
-        if let handle {
-            duocb_stop(handle)
-            self.handle = nil
-        }
         currentRole = nil
         nodeID = nil
         tokenFingerprint = nil
@@ -375,18 +381,31 @@ final class SessionController {
         joinedPeer = nil
         connPaths = nil
         pendingOutbox = nil
+        guard let handle else {
+            next()
+            return
+        }
+        self.handle = nil
+        stopping = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            duocb_stop(handle)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.stopping = false
+                next()
+            }
+        }
     }
 
     /// Mark the current instance dead (runtime ended on its own) and free the
     /// handle, keeping the failure visible on the right screen.
     private func fail(_ message: String) {
-        let wasHub = currentRole == .hub
-        teardown()
-        if wasHub {
+        if currentRole == .hub {
             hubError = message
         } else {
             phase = .failed(message)
         }
+        teardown { [weak self] in self?.startHub() }
     }
 
     private func checkRuntimeAlive() {
@@ -403,6 +422,7 @@ final class SessionController {
 
     func send(text: String) {
         guard let handle, canSend, !text.isEmpty else { return }
+        lastError = nil
         pendingOutbox = text
         _ = text.withCString { duocb_send_clipboard(handle, $0) }
     }
