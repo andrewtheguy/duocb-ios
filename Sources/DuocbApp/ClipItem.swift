@@ -2,7 +2,7 @@ import Foundation
 
 /// A clipboard item that passed through the session — a received item in the
 /// inbox, or the last item sent in the outbox. Lives only in memory, never
-/// written to disk. Mirrors the desktop app's ClipItem (crates/duocb/src/ui/mod.rs):
+/// written to disk. Mirrors the desktop app's ClipItem (crates/duocb/src/app/item.rs):
 /// same CRC-32/ISO-HDLC fingerprint and `XXXX-XXXX` display so the two devices'
 /// readouts can be compared by eye.
 struct ClipItem: Identifiable {

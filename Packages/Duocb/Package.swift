@@ -19,11 +19,8 @@ func localBinaryTarget() -> Target? {
 
 let binaryTarget = localBinaryTarget() ?? .binaryTarget(
     name: "libduocb",
-    url: "https://github.com/andrewtheguy/duocb/releases/download/v0.0.14/libduocb-ios.xcframework.zip",
-    checksum: "b6740a47451f5e222e4ce28306f1361f738dda760183f506e81b8988c48cdfbd"
-    // Placeholder until the first release with an iOS asset is published —
-    // run scripts/bump-xcframework.sh v0.0.8 to fill in the real checksum.
-    // Until then, build with DUOCB_LOCAL_XCFRAMEWORK=1.
+    url: "https://github.com/andrewtheguy/duocb/releases/download/v0.0.15/libduocb-ios.xcframework.zip",
+    checksum: "d097b071eda897a8a7e10c02397e3d97316a8cfd4a586e633a98d5b56e454b49"
 )
 
 let package = Package(

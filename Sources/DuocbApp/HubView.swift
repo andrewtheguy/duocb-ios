@@ -192,8 +192,9 @@ struct JoinView: View {
         } footer: {
             Text("""
                 Tap a device to join it. If it isn't hosting yet, press Start \
-                there — the join keeps retrying until it is. Pull down to \
-                refresh.
+                there — the join retries every few seconds for up to 10 \
+                attempts. If it gives up first, choose Join again and tap the \
+                device. Pull down to refresh.
                 """)
         }
     }

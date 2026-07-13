@@ -9,13 +9,13 @@ first device, import it on every other; compare the fingerprint to confirm
 they match). Each device broadcasts a presence record under a unique identity
 `<name>_<suffix>` — a short name you choose plus a permanent 8-character
 suffix minted on first launch. To pair, **Start a connection** on one device;
-on the other choose **Join another device**, which shows your device list (who
-is hosting, and when each record was last broadcast — no online/offline
-guesswork: relay freshness is unreliable, so nothing is gated on it and the
-iroh dial itself is the liveness check) — tap the device to connect. Any
-listed device can be joined; if it isn't hosting yet the join keeps retrying
-until Start is pressed there. Quick mode (rotating PIN / manual node id) is
-desktop-only.
+on the other choose **Join another device**, which shows your device list and
+when each record was last broadcast — no online/offline or hosting guesswork:
+relay freshness is unreliable, so nothing is gated on it and the iroh dial
+itself is the liveness check. Tap any listed device to connect. If it is not
+hosting yet, the join retries every few seconds for up to 10 attempts; if those
+attempts expire, tap Join again after Start is pressed there. Quick mode
+(rotating PIN / manual pairing code) is desktop-only.
 
 Received text lands in an in-memory inbox showing only size + CRC + time — it
 reaches the clipboard only via an explicit **Copy**, and is revealed only via
