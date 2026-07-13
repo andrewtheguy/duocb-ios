@@ -55,7 +55,7 @@ struct QuickPairView: View {
                     sanitize(value)
                 }
             if rawPINLength == 8 && canonicalPIN == nil {
-                Text("Check the PIN — the last character doesn't match")
+                Text("Check the PIN — it is not valid.")
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
