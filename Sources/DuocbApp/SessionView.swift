@@ -75,10 +75,15 @@ struct SessionView: View {
                 }
                 .frame(maxWidth: .infinity)
                 CopySecretButton(secret: pin, title: "Copy PIN")
+                Button {
+                    controller.refreshPIN()
+                } label: {
+                    Label("New PIN", systemImage: "arrow.clockwise")
+                }
             } header: {
                 Text("PIN")
             } footer: {
-                Text("Enter this PIN on the other device to pair.")
+                Text("Enter this PIN on the other device to pair. New PIN replaces it right away and stops every earlier one from working.")
             }
         }
     }
