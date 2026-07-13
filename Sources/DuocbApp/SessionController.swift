@@ -2,14 +2,16 @@ import Foundation
 import Observation
 
 /// Central view model: owns the Rust FFI handle, polls its event queue on a
-/// timer, and mirrors the desktop app's configure-mode state machine.
+/// timer, and mirrors the desktop app's state machine.
 ///
-/// Two kinds of runtime instance exist, at most one at a time:
+/// Three kinds of runtime instance exist, at most one at a time:
 /// - a **hub** instance (role "hub") runs while the device list is on screen:
 ///   it broadcasts this device's presence and fetches the peer list, but never
 ///   opens a session;
 /// - a **session** instance (role "start"/"join") hosts a connection or joins
-///   the hosting device picked from the list.
+///   the hosting device picked from the list;
+/// - a **quick** instance (role "quick_host"/"quick_join") pairs with any
+///   device via a rotating short PIN — no secret, name, or suffix involved.
 /// Moving between them stops the current instance and starts a fresh one, as
 /// the FFI prescribes.
 ///
@@ -34,6 +36,11 @@ final class SessionController {
 
     enum Role: String {
         case hub, start, join
+        case quickHost = "quick_host"
+        case quickJoin = "quick_join"
+
+        /// Quick roles are identity-less: no secret/name/suffix in the config.
+        var isQuick: Bool { self == .quickHost || self == .quickJoin }
     }
 
     // MARK: - Session state
@@ -46,6 +53,10 @@ final class SessionController {
     private(set) var joinedPeer: String?
     /// Non-nil while the connection-path sheet is up; refreshed by queryConnPath.
     var connPaths: [ConnPath]?
+    /// Quick host: the current PIN ("XXXX-XXXX"), until a peer pairs.
+    private(set) var pinDisplay: String?
+    /// Quick host: when the displayed PIN rotates away.
+    private(set) var pinDeadline: Date?
     /// Received items, newest first, capped like the desktop inbox.
     private(set) var inbox: [ClipItem] = []
     /// The last successfully sent item.
@@ -103,10 +114,12 @@ final class SessionController {
     /// Whether the device picker (JoinView) is on screen; the peer list is
     /// only kept fresh while it is.
     private var peerListVisible = false
-    /// The last session start, for Reconnect after a failure.
+    /// The last session start, for Reconnect after a failure. `peer` carries
+    /// the target display identity (join) or the canonical PIN (quickJoin).
     private(set) var lastSession: (role: Role, peer: String?)?
 
     var isSessionActive: Bool { handle != nil && currentRole != .hub }
+    var isQuickSession: Bool { currentRole?.isQuick ?? false }
     var hasIdentity: Bool { secret != nil && deviceName != nil }
     /// The identity broadcast to the other devices, e.g. "phone_a7B2c3D4".
     var displayIdentity: String? { deviceName.map { "\($0)_\(suffix)" } }
@@ -122,12 +135,28 @@ final class SessionController {
     /// E2E-test hook (Simulator/Debug only): set up the identity and start a
     /// session straight from launch environment variables so a test harness
     /// can drive pairing without UI automation. Pass via `xcrun simctl launch`
-    /// with SIMCTL_CHILD_DUOCB_AUTOSTART_{TOKEN,NAME,ROLE,PEER,SEND};
-    /// ROLE=join requires PEER (the target's display identity), and omitting
-    /// ROLE lands on the hub with the identity configured.
+    /// with SIMCTL_CHILD_DUOCB_AUTOSTART_{TOKEN,NAME,ROLE,PEER,PIN,SEND};
+    /// ROLE=join requires PEER (the target's display identity), ROLE=quick_join
+    /// requires PIN (quick roles need no TOKEN), and omitting ROLE lands on
+    /// the hub with the identity configured.
     func autostartFromEnvironment() {
         let env = ProcessInfo.processInfo.environment
-        guard !isSessionActive, let token = env["DUOCB_AUTOSTART_TOKEN"] else { return }
+        guard !isSessionActive else { return }
+        switch env["DUOCB_AUTOSTART_ROLE"] {
+        case "quick_host":
+            autosendText = env["DUOCB_AUTOSTART_SEND"]
+            startQuickHost()
+            return
+        case "quick_join":
+            if let pin = env["DUOCB_AUTOSTART_PIN"].flatMap(Self.normalizePIN) {
+                autosendText = env["DUOCB_AUTOSTART_SEND"]
+                joinQuick(pin: pin)
+            }
+            return
+        default:
+            break
+        }
+        guard let token = env["DUOCB_AUTOSTART_TOKEN"] else { return }
         autosendText = env["DUOCB_AUTOSTART_SEND"]
         setSecret(token)
         saveName(env["DUOCB_AUTOSTART_NAME"] ?? "phone")
@@ -174,6 +203,16 @@ final class SessionController {
     /// without fingerprint support took the right one (desktop parity).
     nonisolated static func maskedSecretHint(_ secret: String) -> String {
         "********" + secret.suffix(4)
+    }
+
+    /// Canonical form (8 uppercase Crockford chars) of a user-typed quick-pair
+    /// PIN, or nil while it isn't a valid PIN yet. Dashes/spaces/lowercase and
+    /// the I/L→1, O→0 aliases are handled by the Rust core, which also checks
+    /// the trailing check digit.
+    nonisolated static func normalizePIN(_ input: String) -> String? {
+        var buf = [CChar](repeating: 0, count: 16)
+        let rc = input.withCString { duocb_normalize_pin($0, &buf, buf.count) }
+        return rc == 1 ? String(cString: buf) : nil
     }
 
     /// nil if valid, else the reason (mirrors duocb-core identity::validate_name).
@@ -284,6 +323,17 @@ final class SessionController {
         startSession(role: .join, peer: peerDisplay)
     }
 
+    /// Quick pair: host a session under a rotating PIN shown on this device.
+    func startQuickHost() {
+        startSession(role: .quickHost, peer: nil)
+    }
+
+    /// Quick pair: dial the PIN shown on the other device. `canonical` comes
+    /// from `normalizePIN` (the FFI re-checks it anyway).
+    func joinQuick(pin canonical: String) {
+        startSession(role: .quickJoin, peer: canonical)
+    }
+
     private func startSession(role: Role, peer: String?) {
         guard !stopping else { return } // a transition is already in flight
         lastError = nil
@@ -325,21 +375,26 @@ final class SessionController {
         checkRuntimeAlive()
     }
 
-    /// Start a runtime instance with the stored identity. Returns false (and
-    /// records the failure) when it could not start.
+    /// Start a runtime instance — with the stored identity for configure-mode
+    /// roles, identity-less for quick roles. Returns false (and records the
+    /// failure) when it could not start.
     private func startRuntime(role: Role, peer: String?) -> Bool {
-        guard let secret, let deviceName else {
-            record(failure: "Set up the secret and device name first", for: role)
-            return false
-        }
-        var config: [String: Any] = [
-            "role": role.rawValue,
-            "token": secret,
-            "name": deviceName,
-            "suffix": suffix,
-        ]
-        if let peer {
-            config["peer"] = peer
+        var config: [String: Any] = ["role": role.rawValue]
+        if role.isQuick {
+            if role == .quickJoin {
+                config["pin"] = peer
+            }
+        } else {
+            guard let secret, let deviceName else {
+                record(failure: "Set up the secret and device name first", for: role)
+                return false
+            }
+            config["token"] = secret
+            config["name"] = deviceName
+            config["suffix"] = suffix
+            if let peer {
+                config["peer"] = peer
+            }
         }
         guard let data = try? JSONSerialization.data(withJSONObject: config),
               let json = String(data: data, encoding: .utf8)
@@ -384,6 +439,8 @@ final class SessionController {
         tokenFingerprint = nil
         peerNodeID = nil
         joinedPeer = nil
+        pinDisplay = nil
+        pinDeadline = nil
         connPaths = nil
         pendingOutbox = nil
         guard let handle else {
@@ -528,6 +585,14 @@ final class SessionController {
                 fail(lastError ?? "Session ended")
             default: break
             }
+
+        case "pin_rotated":
+            pinDisplay = object["pin_display"] as? String
+            pinDeadline = .now.addingTimeInterval(object["seconds_left"] as? Double ?? 60)
+
+        case "pin_cleared":
+            pinDisplay = nil
+            pinDeadline = nil
 
         case "peer_paired":
             peerNodeID = object["peer_node_id"] as? String

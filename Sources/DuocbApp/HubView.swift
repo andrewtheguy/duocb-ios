@@ -119,13 +119,19 @@ struct HubView: View {
             } label: {
                 Label("Join another device", systemImage: "personalhotspot")
             }
+            Button {
+                step = .quick
+            } label: {
+                Label("Quick pair with a PIN", systemImage: "bolt")
+            }
         } header: {
             Text("Pair")
         } footer: {
             Text("""
                 Start makes this device host the connection — the other device \
                 joins it. Join shows your other devices and connects to the one \
-                that started.
+                that started. Quick pair connects to any duocb device via a \
+                short PIN, even one that doesn't share your secret.
                 """)
         }
     }

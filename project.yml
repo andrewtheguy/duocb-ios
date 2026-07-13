@@ -4,11 +4,11 @@
 # Then open Duocb.xcodeproj, select your signing Team, and run.
 #
 # The app is the iOS peer of the desktop duocb clipboard-sharing app,
-# supporting config/token mode only (start or join a standing pairing with a
-# shared auth token). The networking runs in-process (iroh QUIC + nostr
-# signaling from the Rust core) — no Network Extension, no special
-# entitlement, no paid Apple Developer account required; it also runs in the
-# Simulator.
+# supporting config/token mode (start or join a standing pairing with a
+# shared auth token) and PIN quick pair (ephemeral, identity-less). The
+# networking runs in-process (iroh QUIC + nostr signaling from the Rust core)
+# — no Network Extension, no special entitlement, no paid Apple Developer
+# account required; it also runs in the Simulator.
 #
 # The Rust static library + header come from the local Swift package in
 # Packages/Duocb — a binary target that downloads the pinned release zip by
