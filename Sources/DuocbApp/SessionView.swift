@@ -170,7 +170,7 @@ struct SessionView: View {
         case .connecting: "Connecting…"
         case .authenticating: "Authenticating…"
         case .connected: "Connected"
-        case .reconnecting(let backoffSecs): "Reconnecting in \(backoffSecs)s…"
+        case .reconnecting(let attempt, let max): "Reconnecting… (attempt \(attempt) of \(max))"
         case .failed(let message): "Failed: \(message)"
         }
     }
