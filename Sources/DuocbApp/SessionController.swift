@@ -494,6 +494,14 @@ final class SessionController {
         _ = duocb_query_conn_path(handle)
     }
 
+    /// Quick host: mint and publish a fresh PIN immediately, invalidating
+    /// every previously shown PIN. The replacement arrives as the next
+    /// `pin_rotated` event.
+    func refreshPIN() {
+        guard let handle else { return }
+        _ = duocb_refresh_pin(handle)
+    }
+
     func togglePeek(_ id: ClipItem.ID) {
         guard let i = inbox.firstIndex(where: { $0.id == id }) else { return }
         inbox[i].peekedAt = inbox[i].expanded ? nil : .now
