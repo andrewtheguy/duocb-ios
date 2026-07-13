@@ -28,7 +28,7 @@ final class SessionController {
         case connecting
         case authenticating
         case connected
-        case reconnecting(backoffSecs: Int)
+        case reconnecting(attempt: Int, max: Int)
         case failed(String)
     }
 
@@ -192,11 +192,16 @@ final class SessionController {
 
     // MARK: - Identity mutation (wizard commit points)
 
-    /// Persist a newly generated or imported secret. Saved immediately, like
-    /// the desktop wizard.
-    func setSecret(_ token: String) {
-        TokenStore.save(token)
+    /// Persist a newly generated or imported secret to the Keychain and, only
+    /// if that write succeeds, adopt it in memory. Saved immediately, like the
+    /// desktop wizard. Returns whether the secret is now stored, so the caller
+    /// advances setup only when it truly reached secure storage (and never on
+    /// an empty/failed-to-generate token).
+    @discardableResult
+    func setSecret(_ token: String) -> Bool {
+        guard TokenStore.save(token) else { return false }
         secret = token
+        return true
     }
 
     /// Persist the confirmed device name. If the hub is broadcasting, restart
@@ -513,7 +518,9 @@ final class SessionController {
                 }
                 #endif
             case "reconnecting":
-                phase = .reconnecting(backoffSecs: object["backoff_secs"] as? Int ?? 0)
+                phase = .reconnecting(
+                    attempt: object["attempt"] as? Int ?? 0,
+                    max: object["max"] as? Int ?? 0)
             case "idle":
                 // The runtime only goes idle on its own when the session died
                 // (fatal auth failure, client gave up). The preceding error
