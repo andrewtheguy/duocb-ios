@@ -15,34 +15,12 @@ struct QuickPairView: View {
 
     var body: some View {
         Form {
-            failureSection
+            SessionFailureSection()
             hostSection
             joinSection
             Section {
                 Button("Back", role: .cancel) {
                     step = controller.hasIdentity ? .hub : .choice
-                }
-            }
-        }
-    }
-
-    /// A failed quick session, with Reconnect — this screen is the landing
-    /// spot for quick-session failures when no identity (hub) exists.
-    @ViewBuilder
-    private var failureSection: some View {
-        if case .failed(let message) = controller.phase {
-            Section {
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-                HStack {
-                    if controller.lastSession != nil {
-                        Button("Reconnect") { controller.reconnect() }
-                            .buttonStyle(.borderless)
-                    }
-                    Spacer()
-                    Button("Dismiss") { controller.clearFailure() }
-                        .buttonStyle(.borderless)
                 }
             }
         }

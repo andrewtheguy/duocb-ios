@@ -40,22 +40,7 @@ struct HubView: View {
     /// A failed session (with Reconnect) and hub trouble, when present.
     @ViewBuilder
     private var failureSections: some View {
-        if case .failed(let message) = controller.phase {
-            Section {
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-                HStack {
-                    if controller.lastSession != nil {
-                        Button("Reconnect") { controller.reconnect() }
-                            .buttonStyle(.borderless)
-                    }
-                    Spacer()
-                    Button("Dismiss") { controller.clearFailure() }
-                        .buttonStyle(.borderless)
-                }
-            }
-        }
+        SessionFailureSection()
         if let hubError = controller.hubError {
             Section {
                 Label(hubError, systemImage: "exclamationmark.triangle")

@@ -66,22 +66,7 @@ private struct SecretChoiceView: View {
 
     var body: some View {
         Form {
-            if case .failed(let message) = controller.phase {
-                Section {
-                    Label(message, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.red)
-                        .font(.footnote)
-                    HStack {
-                        if controller.lastSession != nil {
-                            Button("Reconnect") { controller.reconnect() }
-                                .buttonStyle(.borderless)
-                        }
-                        Spacer()
-                        Button("Dismiss") { controller.clearFailure() }
-                            .buttonStyle(.borderless)
-                    }
-                }
-            }
+            SessionFailureSection()
             Section {
                 Button {
                     // Persist immediately and go straight to naming: the secret
@@ -261,6 +246,32 @@ private struct NameDeviceView: View {
             .split(separator: "-", omittingEmptySubsequences: true)
             .joined(separator: "-")
         return String(name.prefix(24))
+    }
+}
+
+/// The failed-session banner (message + Reconnect/Dismiss), shared by every
+/// screen a dead session can land on: the hub, quick pair, and the setup
+/// choice screen (where identity-less quick failures surface).
+struct SessionFailureSection: View {
+    @Environment(SessionController.self) private var controller
+
+    var body: some View {
+        if case .failed(let message) = controller.phase {
+            Section {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .font(.footnote)
+                HStack {
+                    if controller.lastSession != nil {
+                        Button("Reconnect") { controller.reconnect() }
+                            .buttonStyle(.borderless)
+                    }
+                    Spacer()
+                    Button("Dismiss") { controller.clearFailure() }
+                        .buttonStyle(.borderless)
+                }
+            }
+        }
     }
 }
 
