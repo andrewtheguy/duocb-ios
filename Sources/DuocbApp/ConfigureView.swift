@@ -8,7 +8,6 @@ import UniformTypeIdentifiers
 struct ConfigureView: View {
     enum Step: Equatable {
         case choice
-        case generate(token: String)
         case importSecret
         case name
         case hub
@@ -25,8 +24,6 @@ struct ConfigureView: View {
             switch step ?? derivedStep {
             case .choice:
                 SecretChoiceView(step: stepBinding)
-            case .generate(let token):
-                SecretGenerateView(token: token, step: stepBinding)
             case .importSecret:
                 SecretImportView(step: stepBinding)
             case .name:
@@ -60,13 +57,18 @@ struct ConfigureView: View {
 
 /// Wizard entry: create a fresh secret or paste the one from another device.
 private struct SecretChoiceView: View {
+    @Environment(SessionController.self) private var controller
     @Binding var step: ConfigureView.Step
 
     var body: some View {
         Form {
             Section {
                 Button {
-                    step = .generate(token: SessionController.generateToken())
+                    // Persist immediately and go straight to naming: the secret
+                    // is always copyable later from the hub, so a separate
+                    // "save the secret" confirmation step guards nothing.
+                    controller.setSecret(SessionController.generateToken())
+                    step = .name
                 } label: {
                     Label("Create a new secret", systemImage: "key")
                 }
@@ -82,51 +84,6 @@ private struct SecretChoiceView: View {
                     All of your devices share one secret. Create it on the first \
                     device, then import the same secret on every other one.
                     """)
-            }
-        }
-    }
-}
-
-/// One-time presentation of a freshly generated secret: masked with a
-/// last-four hint (never shown in full), fingerprint, and an explicit Copy —
-/// confirmed with "I saved it".
-private struct SecretGenerateView: View {
-    @Environment(SessionController.self) private var controller
-    let token: String
-    @Binding var step: ConfigureView.Step
-
-    var body: some View {
-        Form {
-            Section {
-                LabeledContent("Secret") {
-                    Text(SessionController.maskedSecretHint(token))
-                        .font(.system(.footnote, design: .monospaced))
-                }
-                if let fingerprint = SessionController.tokenFingerprint(token) {
-                    LabeledContent("Fingerprint") {
-                        Text(fingerprint)
-                            .font(.system(.footnote, design: .monospaced))
-                    }
-                }
-                CopySecretButton(secret: token)
-            } header: {
-                Text("Your new secret")
-            } footer: {
-                Text("""
-                    Copy it somewhere safe now — you will paste it into your other \
-                    device. The last four characters are shown so you can spot-check \
-                    a paste where no fingerprint is available.
-                    """)
-            }
-
-            Section {
-                Button("I saved it — continue") {
-                    controller.setSecret(token)
-                    step = .name
-                }
-                Button("Cancel", role: .cancel) {
-                    step = .choice
-                }
             }
         }
     }
