@@ -192,11 +192,16 @@ final class SessionController {
 
     // MARK: - Identity mutation (wizard commit points)
 
-    /// Persist a newly generated or imported secret. Saved immediately, like
-    /// the desktop wizard.
-    func setSecret(_ token: String) {
-        TokenStore.save(token)
+    /// Persist a newly generated or imported secret to the Keychain and, only
+    /// if that write succeeds, adopt it in memory. Saved immediately, like the
+    /// desktop wizard. Returns whether the secret is now stored, so the caller
+    /// advances setup only when it truly reached secure storage (and never on
+    /// an empty/failed-to-generate token).
+    @discardableResult
+    func setSecret(_ token: String) -> Bool {
+        guard TokenStore.save(token) else { return false }
         secret = token
+        return true
     }
 
     /// Persist the confirmed device name. If the hub is broadcasting, restart

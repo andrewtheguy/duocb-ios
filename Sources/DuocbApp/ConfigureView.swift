@@ -66,9 +66,11 @@ private struct SecretChoiceView: View {
                 Button {
                     // Persist immediately and go straight to naming: the secret
                     // is always copyable later from the hub, so a separate
-                    // "save the secret" confirmation step guards nothing.
-                    controller.setSecret(SessionController.generateToken())
-                    step = .name
+                    // "save the secret" confirmation step guards nothing. Only
+                    // advance once it is actually in the Keychain.
+                    if controller.setSecret(SessionController.generateToken()) {
+                        step = .name
+                    }
                 } label: {
                     Label("Create a new secret", systemImage: "key")
                 }
@@ -139,8 +141,10 @@ private struct SecretImportView: View {
 
             Section {
                 Button("Use this secret") {
-                    controller.setSecret(trimmed)
-                    step = .name
+                    // Advance only once the secret is actually in the Keychain.
+                    if controller.setSecret(trimmed) {
+                        step = .name
+                    }
                 }
                 .disabled(trimmed.isEmpty || tokenError != nil)
                 Button("Cancel", role: .cancel) {
