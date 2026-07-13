@@ -40,22 +40,7 @@ struct HubView: View {
     /// A failed session (with Reconnect) and hub trouble, when present.
     @ViewBuilder
     private var failureSections: some View {
-        if case .failed(let message) = controller.phase {
-            Section {
-                Label(message, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                    .font(.footnote)
-                HStack {
-                    if controller.lastSession != nil {
-                        Button("Reconnect") { controller.reconnect() }
-                            .buttonStyle(.borderless)
-                    }
-                    Spacer()
-                    Button("Dismiss") { controller.clearFailure() }
-                        .buttonStyle(.borderless)
-                }
-            }
-        }
+        SessionFailureSection()
         if let hubError = controller.hubError {
             Section {
                 Label(hubError, systemImage: "exclamationmark.triangle")
@@ -119,13 +104,19 @@ struct HubView: View {
             } label: {
                 Label("Join another device", systemImage: "personalhotspot")
             }
+            Button {
+                step = .quick
+            } label: {
+                Label("Quick pair with a PIN", systemImage: "bolt")
+            }
         } header: {
             Text("Pair")
         } footer: {
             Text("""
                 Start makes this device host the connection — the other device \
                 joins it. Join shows your other devices and connects to the one \
-                that started.
+                that started. Quick pair connects to any duocb device via a \
+                short PIN, even one that doesn't share your secret.
                 """)
         }
     }

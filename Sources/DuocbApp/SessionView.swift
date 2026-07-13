@@ -13,6 +13,7 @@ struct SessionView: View {
 
     var body: some View {
         List {
+            pinSection
             statusSection
             if let error = controller.lastError {
                 Section {
@@ -53,6 +54,35 @@ struct SessionView: View {
 
     // MARK: - Sections
 
+    /// Quick host: the rotating PIN, front and center until a peer pairs
+    /// (the runtime then sends pin_cleared and this section disappears).
+    @ViewBuilder
+    private var pinSection: some View {
+        if let pin = controller.pinDisplay {
+            Section {
+                VStack(spacing: 8) {
+                    Text(pin)
+                        .font(.system(size: 44, weight: .semibold, design: .monospaced))
+                        .textSelection(.enabled)
+                    if let deadline = controller.pinDeadline {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            let secs = max(0, Int(deadline.timeIntervalSince(context.date).rounded()))
+                            Text("renews in \(secs)s")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                CopySecretButton(secret: pin, title: "Copy PIN")
+            } header: {
+                Text("PIN")
+            } footer: {
+                Text("Enter this PIN on the other device to pair.")
+            }
+        }
+    }
+
     private var statusSection: some View {
         Section("Status") {
             HStack {
@@ -61,7 +91,9 @@ struct SessionView: View {
                     .frame(width: 10, height: 10)
                 Text(statusText)
             }
-            if let identity = controller.displayIdentity {
+            // Quick sessions are identity-less; the broadcast identity only
+            // applies to configure-mode sessions.
+            if !controller.isQuickSession, let identity = controller.displayIdentity {
                 LabeledContent("This device") {
                     Text(identity).font(.system(.footnote, design: .monospaced))
                 }

@@ -29,5 +29,11 @@
 	     the background; the core's reconnect loop recovers on return to
 	     foreground. No ATS exception either: nostr relays are wss:// and the
 	     iroh QUIC/UDP transport is not ATS-governed. -->
+	<!-- Quick pair publishes/looks up its PIN rendezvous on the LAN (mDNS) as
+	     well as over nostr relays; the LAN half triggers the Local Network
+	     prompt on device. It is best-effort — the relays carry the rendezvous
+	     regardless (raw multicast is entitlement-gated on hardware). -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>duocb uses the local network to find your other device when quick pairing and to connect devices directly.</string>
 </dict>
 </plist>

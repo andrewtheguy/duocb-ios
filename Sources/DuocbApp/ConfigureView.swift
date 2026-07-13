@@ -13,6 +13,8 @@ struct ConfigureView: View {
         case hub
         /// The device picker, shown only after choosing Join on the hub.
         case join
+        /// Quick pair (PIN), reachable before setup and from the hub.
+        case quick
     }
 
     @Environment(SessionController.self) private var controller
@@ -32,6 +34,8 @@ struct ConfigureView: View {
                 HubView(step: stepBinding)
             case .join:
                 JoinView(step: stepBinding)
+            case .quick:
+                QuickPairView(step: stepBinding)
             }
         }
         .navigationTitle("duocb")
@@ -62,6 +66,7 @@ private struct SecretChoiceView: View {
 
     var body: some View {
         Form {
+            SessionFailureSection()
             Section {
                 Button {
                     // Persist immediately and go straight to naming: the secret
@@ -85,6 +90,18 @@ private struct SecretChoiceView: View {
                 Text("""
                     All of your devices share one secret. Create it on the first \
                     device, then import the same secret on every other one.
+                    """)
+            }
+            Section {
+                Button {
+                    step = .quick
+                } label: {
+                    Label("Quick pair with a PIN", systemImage: "bolt")
+                }
+            } footer: {
+                Text("""
+                    Pair two devices right now with a short PIN — no shared \
+                    secret or setup needed.
                     """)
             }
         }
@@ -232,6 +249,32 @@ private struct NameDeviceView: View {
     }
 }
 
+/// The failed-session banner (message + Reconnect/Dismiss), shared by every
+/// screen a dead session can land on: the hub, quick pair, and the setup
+/// choice screen (where identity-less quick failures surface).
+struct SessionFailureSection: View {
+    @Environment(SessionController.self) private var controller
+
+    var body: some View {
+        if case .failed(let message) = controller.phase {
+            Section {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .font(.footnote)
+                HStack {
+                    if controller.lastSession != nil {
+                        Button("Reconnect") { controller.reconnect() }
+                            .buttonStyle(.borderless)
+                    }
+                    Spacer()
+                    Button("Dismiss") { controller.clearFailure() }
+                        .buttonStyle(.borderless)
+                }
+            }
+        }
+    }
+}
+
 /// Copy the secret to the pasteboard: local-only (not Handoff'd) and expiring,
 /// like the old setup form's Copy.
 @MainActor
@@ -246,13 +289,15 @@ func copySecret(_ token: String) {
 }
 
 /// A "Copy secret" button that acknowledges the tap: it reads "✔ Copied" for a
-/// couple of seconds after copying.
+/// couple of seconds after copying. Also reused for the quick-pair PIN via a
+/// custom title (same local-only, expiring pasteboard behavior).
 struct CopySecretButton: View {
     let secret: String
+    var title = "Copy secret"
     @State private var copied = false
 
     var body: some View {
-        Button(copied ? "✔ Copied" : "Copy secret") {
+        Button(copied ? "✔ Copied" : title) {
             copySecret(secret)
             copied = true
             Task {
