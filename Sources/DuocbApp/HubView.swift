@@ -2,9 +2,9 @@ import SwiftUI
 
 /// The configured home hub: this device's identity and the two actions —
 /// **Start a connection** (host; needs nothing but this device) or **Join
-/// another device**, which opens the device picker (JoinView). While this
-/// screen is up, a hub runtime instance broadcasts presence; the peer list is
-/// only fetched while the picker is visible.
+/// another device**, which opens the device picker (JoinView). The hub itself
+/// stays dormant — nostr wakes only when the user starts hosting (a `start`
+/// instance) or opens the picker (a `hub` instance broadcasts + fetches peers).
 struct HubView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: ConfigureView.Step
@@ -16,7 +16,6 @@ struct HubView: View {
             identitySection
             actionsSection
         }
-        .onAppear { controller.startHub() }
         .confirmationDialog(
             "Clear the shared secret?",
             isPresented: $confirmClearSecret,
@@ -142,7 +141,10 @@ struct JoinView: View {
             }
             devicesSection
             Section {
-                Button("Back", role: .cancel) { step = .hub }
+                Button("Back", role: .cancel) {
+                    controller.stopHub()
+                    step = .hub
+                }
             }
         }
         .refreshable { controller.refreshPeers() }

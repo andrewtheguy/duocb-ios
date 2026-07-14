@@ -43,6 +43,22 @@ final class SessionController {
         var isQuick: Bool { self == .quickHost || self == .quickJoin }
     }
 
+    /// Which channel carries the quick-pair rendezvous (the FFI `channel`
+    /// config key). Both devices must use the same channel.
+    enum QuickChannel: String, CaseIterable {
+        /// Nostr relays + LAN (the desktop "P" preset) — the default. On iOS
+        /// the relays carry the rendezvous; the connection itself can still
+        /// be LAN-direct.
+        case nostrLan = "nostr_lan"
+        /// LAN only (the desktop "L" preset): no third-party server at all.
+        /// The rendezvous is a Bonjour service registered through the system
+        /// daemon (so no multicast entitlement is involved) and the join
+        /// dials the direct addresses it resolves. Requires both devices on
+        /// the same network; joining triggers the Local Network permission
+        /// prompt on first use.
+        case lan
+    }
+
     // MARK: - Session state
 
     private(set) var phase: Phase = .idle
@@ -115,8 +131,9 @@ final class SessionController {
     /// only kept fresh while it is.
     private var peerListVisible = false
     /// The last session start, for Reconnect after a failure. `peer` carries
-    /// the target display identity (join) or the canonical PIN (quickJoin).
-    private(set) var lastSession: (role: Role, peer: String?)?
+    /// the target display identity (join) or the canonical PIN (quickJoin);
+    /// `channel` the quick-pair channel (nil for configure-mode roles).
+    private(set) var lastSession: (role: Role, peer: String?, channel: QuickChannel?)?
 
     var isSessionActive: Bool { handle != nil && currentRole != .hub }
     var isQuickSession: Bool { currentRole?.isQuick ?? false }
@@ -135,22 +152,26 @@ final class SessionController {
     /// E2E-test hook (Simulator/Debug only): set up the identity and start a
     /// session straight from launch environment variables so a test harness
     /// can drive pairing without UI automation. Pass via `xcrun simctl launch`
-    /// with SIMCTL_CHILD_DUOCB_AUTOSTART_{TOKEN,NAME,ROLE,PEER,PIN,SEND};
+    /// with SIMCTL_CHILD_DUOCB_AUTOSTART_{TOKEN,NAME,ROLE,PEER,PIN,CHANNEL,SEND};
     /// ROLE=join requires PEER (the target's display identity), ROLE=quick_join
-    /// requires PIN (quick roles need no TOKEN), and omitting ROLE lands on
-    /// the hub with the identity configured.
+    /// requires PIN (quick roles need no TOKEN), CHANNEL selects the quick
+    /// channel ("lan" for the LAN-only preset, default "nostr_lan"), and
+    /// omitting ROLE lands on the hub with the identity configured (dormant —
+    /// nostr wakes only on Start/Join).
     func autostartFromEnvironment() {
         let env = ProcessInfo.processInfo.environment
         guard !isSessionActive else { return }
+        let channel = env["DUOCB_AUTOSTART_CHANNEL"]
+            .flatMap(QuickChannel.init(rawValue:)) ?? .nostrLan
         switch env["DUOCB_AUTOSTART_ROLE"] {
         case "quick_host":
             autosendText = env["DUOCB_AUTOSTART_SEND"]
-            startQuickHost()
+            startQuickHost(channel: channel)
             return
         case "quick_join":
             if let pin = env["DUOCB_AUTOSTART_PIN"].flatMap(Self.normalizePIN) {
                 autosendText = env["DUOCB_AUTOSTART_SEND"]
-                joinQuick(pin: pin)
+                joinQuick(pin: pin, channel: channel)
             }
             return
         default:
@@ -269,9 +290,10 @@ final class SessionController {
 
     // MARK: - Hub lifecycle
 
-    /// Run the hub instance (presence broadcast + peer list) while the hub
-    /// screen is visible. No-op when any instance is already running or an
-    /// old one is still shutting down (its teardown completion restarts us).
+    /// Run the hub instance (presence broadcast + peer list) while the device
+    /// picker is open — this is where nostr wakes for a join. No-op when any
+    /// instance is already running or an old one is still shutting down (its
+    /// teardown completion restarts us).
     func startHub() {
         guard handle == nil, !stopping, hasIdentity else { return }
         presenceConflict = nil
@@ -279,6 +301,19 @@ final class SessionController {
         guard startRuntime(role: .hub, peer: nil) else { return }
         // The FFI issues the initial peer fetch itself.
         lastPeerRequestAt = .now
+    }
+
+    /// Stop the hub instance, putting nostr back to sleep. Called when the user
+    /// leaves the device picker back to the plain hub, so the home screen holds
+    /// no relay connections. No-op unless the hub is the running instance.
+    func stopHub() {
+        guard currentRole == .hub else { return }
+        peers = []
+        peersRefreshedAt = nil
+        lastPeerRequestAt = nil
+        presenceConflict = nil
+        hubError = nil
+        teardown {}
     }
 
     /// Re-fetch the device list; the result arrives as a `peer_list` event.
@@ -324,40 +359,41 @@ final class SessionController {
     }
 
     /// Quick pair: host a session under a rotating PIN shown on this device.
-    func startQuickHost() {
-        startSession(role: .quickHost, peer: nil)
+    func startQuickHost(channel: QuickChannel = .nostrLan) {
+        startSession(role: .quickHost, peer: nil, channel: channel)
     }
 
     /// Quick pair: dial the PIN shown on the other device. `canonical` comes
     /// from `normalizePIN` (the FFI re-checks it anyway).
-    func joinQuick(pin canonical: String) {
-        startSession(role: .quickJoin, peer: canonical)
+    func joinQuick(pin canonical: String, channel: QuickChannel = .nostrLan) {
+        startSession(role: .quickJoin, peer: canonical, channel: channel)
     }
 
-    private func startSession(role: Role, peer: String?) {
+    private func startSession(role: Role, peer: String?, channel: QuickChannel? = nil) {
         guard !stopping else { return } // a transition is already in flight
         lastError = nil
-        lastSession = (role, peer)
+        lastSession = (role, peer, channel)
         // Instant feedback; the runtime's own status events take over once the
         // old instance (hub or previous session) has wound down off-thread.
         phase = .starting
         teardown { [weak self] in
             guard let self else { return }
-            _ = self.startRuntime(role: role, peer: peer)
+            _ = self.startRuntime(role: role, peer: peer, channel: channel)
         }
     }
 
     /// Re-run the last session after a failure (offered on the hub).
     func reconnect() {
         guard let s = lastSession else { return }
-        startSession(role: s.role, peer: s.peer)
+        startSession(role: s.role, peer: s.peer, channel: s.channel)
     }
 
-    /// Stop the session and return to the hub.
+    /// Stop the session and return to the hub, now dormant: nostr stays off
+    /// until the user picks Start or Join again.
     func stop() {
         phase = .idle
         lastError = nil
-        teardown { [weak self] in self?.startHub() }
+        teardown {}
     }
 
     /// Dismiss a failure banner without reconnecting.
@@ -378,9 +414,10 @@ final class SessionController {
     /// Start a runtime instance — with the stored identity for configure-mode
     /// roles, identity-less for quick roles. Returns false (and records the
     /// failure) when it could not start.
-    private func startRuntime(role: Role, peer: String?) -> Bool {
+    private func startRuntime(role: Role, peer: String?, channel: QuickChannel? = nil) -> Bool {
         var config: [String: Any] = ["role": role.rawValue]
         if role.isQuick {
+            config["channel"] = (channel ?? .nostrLan).rawValue
             if role == .quickJoin {
                 config["pin"] = peer
             }
@@ -463,11 +500,15 @@ final class SessionController {
     /// handle, keeping the failure visible on the right screen.
     private func fail(_ message: String) {
         if currentRole == .hub {
+            // The hub only runs while the picker is open, so restart it to keep
+            // browsing alive.
             hubError = message
+            teardown { [weak self] in self?.startHub() }
         } else {
+            // A session died: drop to the dormant hub with the failure shown.
             phase = .failed(message)
+            teardown {}
         }
-        teardown { [weak self] in self?.startHub() }
     }
 
     private func checkRuntimeAlive() {
