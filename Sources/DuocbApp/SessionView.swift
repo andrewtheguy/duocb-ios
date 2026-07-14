@@ -220,14 +220,19 @@ struct SessionView: View {
 struct CopyTextButton: View {
     let text: String
     @State private var copied = false
+    @State private var resetTask: Task<Void, Never>?
 
     var body: some View {
         Button(copied ? "✔ Copied" : "Copy") {
             UIPasteboard.general.string = text
             copied = true
-            Task {
+            // Cancel the previous reset so the latest tap owns the timer —
+            // otherwise an earlier tap's timer clears the acknowledgement
+            // before this tap's two seconds are up.
+            resetTask?.cancel()
+            resetTask = Task {
                 try? await Task.sleep(for: .seconds(2))
-                copied = false
+                if !Task.isCancelled { copied = false }
             }
         }
         .buttonStyle(.borderless)
