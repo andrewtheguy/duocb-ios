@@ -156,7 +156,8 @@ final class SessionController {
     /// ROLE=join requires PEER (the target's display identity), ROLE=quick_join
     /// requires PIN (quick roles need no TOKEN), CHANNEL selects the quick
     /// channel ("lan" for the LAN-only preset, default "nostr_lan"), and
-    /// omitting ROLE lands on the hub with the identity configured.
+    /// omitting ROLE lands on the hub with the identity configured (dormant —
+    /// nostr wakes only on Start/Join).
     func autostartFromEnvironment() {
         let env = ProcessInfo.processInfo.environment
         guard !isSessionActive else { return }
@@ -289,9 +290,10 @@ final class SessionController {
 
     // MARK: - Hub lifecycle
 
-    /// Run the hub instance (presence broadcast + peer list) while the hub
-    /// screen is visible. No-op when any instance is already running or an
-    /// old one is still shutting down (its teardown completion restarts us).
+    /// Run the hub instance (presence broadcast + peer list) while the device
+    /// picker is open — this is where nostr wakes for a join. No-op when any
+    /// instance is already running or an old one is still shutting down (its
+    /// teardown completion restarts us).
     func startHub() {
         guard handle == nil, !stopping, hasIdentity else { return }
         presenceConflict = nil
@@ -299,6 +301,19 @@ final class SessionController {
         guard startRuntime(role: .hub, peer: nil) else { return }
         // The FFI issues the initial peer fetch itself.
         lastPeerRequestAt = .now
+    }
+
+    /// Stop the hub instance, putting nostr back to sleep. Called when the user
+    /// leaves the device picker back to the plain hub, so the home screen holds
+    /// no relay connections. No-op unless the hub is the running instance.
+    func stopHub() {
+        guard currentRole == .hub else { return }
+        peers = []
+        peersRefreshedAt = nil
+        lastPeerRequestAt = nil
+        presenceConflict = nil
+        hubError = nil
+        teardown {}
     }
 
     /// Re-fetch the device list; the result arrives as a `peer_list` event.
@@ -373,11 +388,12 @@ final class SessionController {
         startSession(role: s.role, peer: s.peer, channel: s.channel)
     }
 
-    /// Stop the session and return to the hub.
+    /// Stop the session and return to the hub, now dormant: nostr stays off
+    /// until the user picks Start or Join again.
     func stop() {
         phase = .idle
         lastError = nil
-        teardown { [weak self] in self?.startHub() }
+        teardown {}
     }
 
     /// Dismiss a failure banner without reconnecting.
@@ -484,11 +500,15 @@ final class SessionController {
     /// handle, keeping the failure visible on the right screen.
     private func fail(_ message: String) {
         if currentRole == .hub {
+            // The hub only runs while the picker is open, so restart it to keep
+            // browsing alive.
             hubError = message
+            teardown { [weak self] in self?.startHub() }
         } else {
+            // A session died: drop to the dormant hub with the failure shown.
             phase = .failed(message)
+            teardown {}
         }
-        teardown { [weak self] in self?.startHub() }
     }
 
     private func checkRuntimeAlive() {
