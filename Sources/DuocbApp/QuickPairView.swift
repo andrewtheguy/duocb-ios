@@ -1,13 +1,17 @@
 import SwiftUI
 
-/// Quick pair (the desktop "P" preset): ephemeral pairing with any duocb
-/// device via a short rotating PIN — no shared secret, name, or identity
-/// involved, so it also works before setup. Hosting moves to SessionView,
-/// which shows the PIN; joining dials the PIN typed here.
+/// Quick pair (the desktop "P" and "L" presets): ephemeral pairing with any
+/// duocb device via a short rotating PIN — no shared secret, name, or
+/// identity involved, so it also works before setup. Hosting moves to
+/// SessionView, which shows the PIN; joining dials the PIN typed here. The
+/// channel menu picks between the default internet+LAN rendezvous and the
+/// LAN-only one (Bonjour through the system daemon, no third-party server);
+/// both devices must use the same channel.
 struct QuickPairView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: ConfigureView.Step
     @State private var draft = ""
+    @State private var channel: SessionController.QuickChannel = .nostrLan
 
     private var canonicalPIN: String? {
         SessionController.normalizePIN(draft)
@@ -16,6 +20,7 @@ struct QuickPairView: View {
     var body: some View {
         Form {
             SessionFailureSection()
+            channelSection
             hostSection
             joinSection
             Section {
@@ -26,10 +31,37 @@ struct QuickPairView: View {
         }
     }
 
+    private var channelSection: some View {
+        Section {
+            Picker(selection: $channel) {
+                Text("Internet + local network")
+                    .tag(SessionController.QuickChannel.nostrLan)
+                Text("Local network only")
+                    .tag(SessionController.QuickChannel.lan)
+            } label: {
+                Label("Channel", systemImage: "point.3.connected.trianglepath.dotted")
+            }
+        } footer: {
+            if channel == .lan {
+                Text("""
+                    No third-party server: the PIN is found over the local \
+                    network only (the desktop "L" preset). Both devices must \
+                    be on the same network and pick this channel; joining \
+                    asks for Local Network permission.
+                    """)
+            } else {
+                Text("""
+                    Works across the internet and on the same network (the \
+                    desktop "P" preset). Pick the same channel on both devices.
+                    """)
+            }
+        }
+    }
+
     private var hostSection: some View {
         Section {
             Button {
-                controller.startQuickHost()
+                controller.startQuickHost(channel: channel)
             } label: {
                 Label("Show a PIN on this device", systemImage: "antenna.radiowaves.left.and.right")
             }
@@ -61,7 +93,7 @@ struct QuickPairView: View {
             }
             Button("Join") {
                 if let pin = canonicalPIN {
-                    controller.joinQuick(pin: pin)
+                    controller.joinQuick(pin: pin, channel: channel)
                 }
             }
             .disabled(canonicalPIN == nil)

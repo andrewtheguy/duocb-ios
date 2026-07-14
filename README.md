@@ -20,11 +20,23 @@ It also supports **quick pair**: ephemeral pairing with any duocb device —
 even one that doesn't share your secret — via a short rotating PIN, with no
 setup at all (it's offered on the first screen and on the hub). One device
 shows the PIN, the other types it; the PIN renews every 60 seconds until a
-device pairs. This matches the desktop **P** preset (rendezvous over nostr
-relays and the local network; on iPhone hardware the LAN half is best-effort —
-raw multicast is entitlement-gated — while the relays carry the rendezvous).
-The desktop's LAN-only / nostr-only PIN presets and the manual pairing code
-remain desktop-only.
+device pairs. A **channel** menu picks how the PIN is found, matching the
+desktop presets — choose the same channel on both devices:
+
+- **Internet + local network** (default; the desktop **P** preset) — the
+  rendezvous rides public nostr relays. Works across networks; the connection
+  itself still goes direct when the devices share a network.
+- **Local network only** (the desktop **L** preset) — no third-party server
+  at all: the PIN is advertised as a Bonjour service through the system's
+  mDNSResponder daemon (no multicast entitlement involved) and the joiner
+  dials the direct addresses it resolves. Both devices must be on the same
+  network. Joining triggers the Local Network permission prompt; hosting
+  needs the permission too — if iOS denies the advertisement, the app shows
+  an error and nudges the prompt, and the next PIN rotation (≤60 s) recovers
+  once you grant access (Settings > Privacy & Security > Local Network).
+
+The desktop's nostr-only PIN preset and the manual pairing code remain
+desktop-only.
 
 Received text lands in an in-memory inbox showing only size + CRC + time — it
 reaches the clipboard only via an explicit **Copy**, and is revealed only via

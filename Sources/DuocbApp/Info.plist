@@ -29,11 +29,17 @@
 	     the background; the core's reconnect loop recovers on return to
 	     foreground. No ATS exception either: nostr relays are wss:// and the
 	     iroh QUIC/UDP transport is not ATS-governed. -->
-	<!-- Quick pair publishes/looks up its PIN rendezvous on the LAN (mDNS) as
-	     well as over nostr relays; the LAN half triggers the Local Network
-	     prompt on device. It is best-effort — the relays carry the rendezvous
-	     regardless (raw multicast is entitlement-gated on hardware). -->
+	<!-- Quick pair's LAN-only channel registers/resolves the PIN rendezvous
+	     as a Bonjour service through the system mDNSResponder daemon (no
+	     multicast entitlement involved). Browsing/resolving requires the
+	     service type listed under NSBonjourServices and triggers the Local
+	     Network permission prompt on first use; the default channel carries
+	     the rendezvous over nostr relays instead. -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>duocb uses the local network to find your other device when quick pairing and to connect devices directly.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_duocb-pin._udp</string>
+	</array>
 </dict>
 </plist>
