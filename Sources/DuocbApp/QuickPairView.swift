@@ -21,7 +21,6 @@ struct QuickPairView: View {
     var body: some View {
         Form {
             SessionFailureSection()
-            channelSection
             hostSection
             joinSection
             Section {
@@ -32,7 +31,9 @@ struct QuickPairView: View {
         }
     }
 
-    private var channelSection: some View {
+    // Showing a PIN is where the channel is chosen; the picker lives here so the
+    // join section below has no choices to make.
+    private var hostSection: some View {
         Section {
             Picker(selection: $channel) {
                 Text("Internet + local network")
@@ -40,29 +41,8 @@ struct QuickPairView: View {
                 Text("Local network only")
                     .tag(SessionController.QuickChannel.lan)
             } label: {
-                Label("Channel for the PIN you show", systemImage: "point.3.connected.trianglepath.dotted")
+                Label("Channel", systemImage: "point.3.connected.trianglepath.dotted")
             }
-        } footer: {
-            if channel == .lan {
-                Text("""
-                    No third-party server: the PIN is found over the local \
-                    network only (the desktop "L" preset). Both devices must \
-                    be on the same network; joining asks for Local Network \
-                    permission. The PIN you show encodes this channel, so the \
-                    joiner just types it.
-                    """)
-            } else {
-                Text("""
-                    Works across the internet and on the same network (the \
-                    desktop "P" preset). The joiner reads the channel from the \
-                    PIN, so there is nothing to match.
-                    """)
-            }
-        }
-    }
-
-    private var hostSection: some View {
-        Section {
             Button {
                 controller.startQuickHost(channel: channel)
             } label: {
@@ -71,11 +51,21 @@ struct QuickPairView: View {
         } header: {
             Text("Show a PIN")
         } footer: {
-            Text("""
-                A short PIN appears on this device. Enter it on the other \
-                device within a minute — it renews every 60 seconds until a \
-                device pairs.
-                """)
+            if channel == .lan {
+                Text("""
+                    No third-party server: the PIN is found over the local \
+                    network only (the desktop "L" preset); both devices must be \
+                    on the same network, and joining asks for Local Network \
+                    permission. A short PIN appears on this device and renews \
+                    every 60 seconds until a device pairs.
+                    """)
+            } else {
+                Text("""
+                    Works across the internet and on the same network (the \
+                    desktop "P" preset). A short PIN appears on this device and \
+                    renews every 60 seconds until a device pairs.
+                    """)
+            }
         }
     }
 
