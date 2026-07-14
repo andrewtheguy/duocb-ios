@@ -167,10 +167,7 @@ struct SessionView: View {
                             controller.togglePeek(item.id)
                         }
                         .buttonStyle(.borderless)
-                        Button("Copy") {
-                            UIPasteboard.general.string = item.text
-                        }
-                        .buttonStyle(.borderless)
+                        CopyTextButton(text: item.text)
                     }
                     if item.expanded {
                         Text(item.peekText)
@@ -214,5 +211,30 @@ struct SessionView: View {
 
     private func shortNodeID(_ id: String) -> String {
         id.count > 16 ? "\(id.prefix(8))…\(id.suffix(8))" : id
+    }
+}
+
+/// A "Copy" button that acknowledges the tap: it reads "✔ Copied" for a couple
+/// of seconds after copying arbitrary text to the pasteboard (the received
+/// clipboard items — unlike the secret, these are ordinary clipboard content).
+struct CopyTextButton: View {
+    let text: String
+    @State private var copied = false
+    @State private var resetTask: Task<Void, Never>?
+
+    var body: some View {
+        Button(copied ? "✔ Copied" : "Copy") {
+            UIPasteboard.general.string = text
+            copied = true
+            // Cancel the previous reset so the latest tap owns the timer —
+            // otherwise an earlier tap's timer clears the acknowledgement
+            // before this tap's two seconds are up.
+            resetTask?.cancel()
+            resetTask = Task {
+                try? await Task.sleep(for: .seconds(2))
+                if !Task.isCancelled { copied = false }
+            }
+        }
+        .buttonStyle(.borderless)
     }
 }

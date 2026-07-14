@@ -44,7 +44,8 @@ final class SessionController {
     }
 
     /// Which channel carries the quick-pair rendezvous (the FFI `channel`
-    /// config key). Both devices must use the same channel.
+    /// config key). Chosen only when hosting; the joiner reads the channel from
+    /// the PIN's first character, so the two sides never have to be set to match.
     enum QuickChannel: String, CaseIterable {
         /// Nostr relays + LAN (the desktop "P" preset) — the default. On iOS
         /// the relays carry the rendezvous; the connection itself can still
@@ -154,10 +155,11 @@ final class SessionController {
     /// can drive pairing without UI automation. Pass via `xcrun simctl launch`
     /// with SIMCTL_CHILD_DUOCB_AUTOSTART_{TOKEN,NAME,ROLE,PEER,PIN,CHANNEL,SEND};
     /// ROLE=join requires PEER (the target's display identity), ROLE=quick_join
-    /// requires PIN (quick roles need no TOKEN), CHANNEL selects the quick
-    /// channel ("lan" for the LAN-only preset, default "nostr_lan"), and
-    /// omitting ROLE lands on the hub with the identity configured (dormant —
-    /// nostr wakes only on Start/Join).
+    /// requires PIN (quick roles need no TOKEN), CHANNEL selects the quick_host
+    /// channel ("lan" for the LAN-only preset, default "nostr_lan"; quick_join
+    /// ignores it — the channel is read from the PIN), and omitting ROLE lands
+    /// on the hub with the identity configured (dormant — nostr wakes only on
+    /// Start/Join).
     func autostartFromEnvironment() {
         let env = ProcessInfo.processInfo.environment
         guard !isSessionActive else { return }
@@ -171,7 +173,7 @@ final class SessionController {
         case "quick_join":
             if let pin = env["DUOCB_AUTOSTART_PIN"].flatMap(Self.normalizePIN) {
                 autosendText = env["DUOCB_AUTOSTART_SEND"]
-                joinQuick(pin: pin, channel: channel)
+                joinQuick(pin: pin)
             }
             return
         default:
@@ -364,9 +366,10 @@ final class SessionController {
     }
 
     /// Quick pair: dial the PIN shown on the other device. `canonical` comes
-    /// from `normalizePIN` (the FFI re-checks it anyway).
-    func joinQuick(pin canonical: String, channel: QuickChannel = .nostrLan) {
-        startSession(role: .quickJoin, peer: canonical, channel: channel)
+    /// from `normalizePIN` (the FFI re-checks it anyway). No channel argument —
+    /// the FFI reads the rendezvous channel from the PIN's first character.
+    func joinQuick(pin canonical: String) {
+        startSession(role: .quickJoin, peer: canonical, channel: nil)
     }
 
     private func startSession(role: Role, peer: String?, channel: QuickChannel? = nil) {
@@ -417,9 +420,11 @@ final class SessionController {
     private func startRuntime(role: Role, peer: String?, channel: QuickChannel? = nil) -> Bool {
         var config: [String: Any] = ["role": role.rawValue]
         if role.isQuick {
-            config["channel"] = (channel ?? .nostrLan).rawValue
             if role == .quickJoin {
+                // No channel on join — the FFI infers it from the PIN.
                 config["pin"] = peer
+            } else {
+                config["channel"] = (channel ?? .nostrLan).rawValue
             }
         } else {
             guard let secret, let deviceName else {

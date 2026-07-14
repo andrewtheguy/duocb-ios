@@ -4,9 +4,10 @@ import SwiftUI
 /// duocb device via a short rotating PIN — no shared secret, name, or
 /// identity involved, so it also works before setup. Hosting moves to
 /// SessionView, which shows the PIN; joining dials the PIN typed here. The
-/// channel menu picks between the default internet+LAN rendezvous and the
-/// LAN-only one (Bonjour through the system daemon, no third-party server);
-/// both devices must use the same channel.
+/// channel menu picks the rendezvous for the PIN you *show* — the default
+/// internet+LAN one or the LAN-only one (Bonjour through the system daemon, no
+/// third-party server). When joining, the channel is read from the typed PIN,
+/// so there is nothing to match.
 struct QuickPairView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: ConfigureView.Step
@@ -20,7 +21,6 @@ struct QuickPairView: View {
     var body: some View {
         Form {
             SessionFailureSection()
-            channelSection
             hostSection
             joinSection
             Section {
@@ -31,7 +31,9 @@ struct QuickPairView: View {
         }
     }
 
-    private var channelSection: some View {
+    // Showing a PIN is where the channel is chosen; the picker lives here so the
+    // join section below has no choices to make.
+    private var hostSection: some View {
         Section {
             Picker(selection: $channel) {
                 Text("Internet + local network")
@@ -41,25 +43,6 @@ struct QuickPairView: View {
             } label: {
                 Label("Channel", systemImage: "point.3.connected.trianglepath.dotted")
             }
-        } footer: {
-            if channel == .lan {
-                Text("""
-                    No third-party server: the PIN is found over the local \
-                    network only (the desktop "L" preset). Both devices must \
-                    be on the same network and pick this channel; joining \
-                    asks for Local Network permission.
-                    """)
-            } else {
-                Text("""
-                    Works across the internet and on the same network (the \
-                    desktop "P" preset). Pick the same channel on both devices.
-                    """)
-            }
-        }
-    }
-
-    private var hostSection: some View {
-        Section {
             Button {
                 controller.startQuickHost(channel: channel)
             } label: {
@@ -68,11 +51,21 @@ struct QuickPairView: View {
         } header: {
             Text("Show a PIN")
         } footer: {
-            Text("""
-                A short PIN appears on this device. Enter it on the other \
-                device within a minute — it renews every 60 seconds until a \
-                device pairs.
-                """)
+            if channel == .lan {
+                Text("""
+                    No third-party server: the PIN is found over the local \
+                    network only (the desktop "L" preset); both devices must be \
+                    on the same network, and joining asks for Local Network \
+                    permission. A short PIN appears on this device and renews \
+                    every 60 seconds until a device pairs.
+                    """)
+            } else {
+                Text("""
+                    Works across the internet and on the same network (the \
+                    desktop "P" preset). A short PIN appears on this device and \
+                    renews every 60 seconds until a device pairs.
+                    """)
+            }
         }
     }
 
@@ -93,14 +86,14 @@ struct QuickPairView: View {
             }
             Button("Join") {
                 if let pin = canonicalPIN {
-                    controller.joinQuick(pin: pin, channel: channel)
+                    controller.joinQuick(pin: pin)
                 }
             }
             .disabled(canonicalPIN == nil)
         } header: {
             Text("Enter a PIN")
         } footer: {
-            Text("Type the PIN shown on the hosting device.")
+            Text("Type the PIN shown on the hosting device — its channel is taken from the PIN automatically.")
         }
     }
 
