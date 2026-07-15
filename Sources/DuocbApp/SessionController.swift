@@ -250,6 +250,52 @@ final class SessionController {
         input.withCString { duocb_pin_is_lan_only($0) == 1 }
     }
 
+    /// How the LAN-only host-IP entry should be constrained to this device's own
+    /// subnet (see `duocb_join_ip_context`). `prefix` is the locked network part
+    /// the user types after (empty when no subnet was detected → free entry),
+    /// `hint` a range hint for a partial-octet subnet, `label` the CIDR for the
+    /// out-of-range message.
+    struct JoinIPContext {
+        var prefix: String
+        var hint: String
+        var label: String
+        static let empty = JoinIPContext(prefix: "", hint: "", label: "")
+    }
+
+    nonisolated static func joinIPContext() -> JoinIPContext {
+        var buf = [CChar](repeating: 0, count: 256)
+        guard duocb_join_ip_context(&buf, buf.count) == 1,
+              let data = String(cString: buf).data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return .empty }
+        return JoinIPContext(
+            prefix: obj["prefix"] as? String ?? "",
+            hint: obj["hint"] as? String ?? "",
+            label: obj["label"] as? String ?? ""
+        )
+    }
+
+    /// The outcome of validating the host-IP entry against this device's subnet
+    /// (see `duocb_resolve_join_ip`). `.inRange` carries the full dotted-quad to
+    /// pass to `joinQuick(ip:)`; `.empty` means resolve via mDNS (pass no IP).
+    enum JoinIPOutcome: Equatable {
+        case empty
+        case inRange(String)
+        case outOfRange
+        case malformed
+    }
+
+    nonisolated static func resolveJoinIP(_ entry: String) -> JoinIPOutcome {
+        var buf = [CChar](repeating: 0, count: 32)
+        let rc = entry.withCString { duocb_resolve_join_ip($0, &buf, buf.count) }
+        switch rc {
+        case 1: return .inRange(String(cString: buf))
+        case 0: return .outOfRange
+        case 2: return .empty
+        default: return .malformed
+        }
+    }
+
     /// nil if valid, else the reason (mirrors duocb-core identity::validate_name).
     nonisolated static func validateName(_ name: String) -> String? {
         if name.isEmpty {
