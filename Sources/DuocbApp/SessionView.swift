@@ -72,6 +72,14 @@ struct SessionView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    // LAN-only channel: if the other device can't find this one
+                    // automatically, the joiner can type this IP.
+                    if let ip = controller.hostLanIP {
+                        Text("Local IP: \(ip)")
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 CopySecretButton(secret: pin, title: "Copy PIN")
@@ -83,7 +91,9 @@ struct SessionView: View {
             } header: {
                 Text("PIN")
             } footer: {
-                Text("Enter this PIN on the other device to pair. New PIN replaces it right away and stops every earlier one from working.")
+                Text(controller.hostLanIP == nil
+                    ? "Enter this PIN on the other device to pair. New PIN replaces it right away and stops every earlier one from working."
+                    : "Enter this PIN on the other device to pair. If it isn't found automatically, also type the local IP shown above. New PIN replaces it right away and stops every earlier one from working.")
             }
         }
     }
