@@ -1,5 +1,4 @@
 import SwiftUI
-import Network
 
 /// Quick pair (the desktop "P" and "L" presets): ephemeral pairing with any
 /// duocb device via a short rotating PIN — no shared secret, name, or
@@ -15,6 +14,11 @@ struct QuickPairView: View {
     @State private var draft = ""
     @State private var ipDraft = ""
     @State private var channel: SessionController.QuickChannel = .nostrLan
+    /// How the host-IP entry is constrained to this device's subnet (locked
+    /// prefix + range hint + CIDR label), fetched when a LAN-only PIN is typed.
+    @State private var ipContext = SessionController.JoinIPContext.empty
+    /// Cached validation of `ipDraft` against `ipContext`, refreshed on edit.
+    @State private var ipOutcome = SessionController.JoinIPOutcome.empty
 
     private var canonicalPIN: String? {
         SessionController.normalizePIN(draft)
@@ -26,9 +30,23 @@ struct QuickPairView: View {
         SessionController.pinIsLanOnly(draft)
     }
 
-    /// The host-IP entry is optional; when present it must be a dotted-quad IPv4.
-    private var ipValid: Bool {
-        ipDraft.isEmpty || IPv4Address(ipDraft) != nil
+    /// The host-IP entry is optional; blank (→ mDNS) or an in-range address is
+    /// ready to dial, but an out-of-range or malformed entry blocks Join.
+    private var ipReady: Bool {
+        switch ipOutcome {
+        case .empty, .inRange: return true
+        case .outOfRange, .malformed: return false
+        }
+    }
+
+    /// The full IPv4 to dial, or nil to resolve via mDNS.
+    private var resolvedIP: String? {
+        if case .inRange(let full) = ipOutcome { return full }
+        return nil
+    }
+
+    private func refreshIPValidation() {
+        ipOutcome = SessionController.resolveJoinIP(ipDraft)
     }
 
     var body: some View {
@@ -40,6 +58,14 @@ struct QuickPairView: View {
                 Button("Back", role: .cancel) {
                     step = controller.hasIdentity ? .hub : .choice
                 }
+            }
+        }
+        // Read this device's subnet once a LAN-only PIN reveals the host-IP
+        // field, so the entry can lock the network part and range-check the rest.
+        .task(id: isLanOnly) {
+            if isLanOnly {
+                ipContext = SessionController.joinIPContext()
+                refreshIPValidation()
             }
         }
     }
@@ -99,25 +125,48 @@ struct QuickPairView: View {
             }
             // LAN-only PIN: an optional host IP pairs over the unicast side
             // channel when the device isn't found automatically (multicast
-            // blocked). Blank resolves via mDNS as usual.
+            // blocked). Blank resolves via mDNS as usual. The entry is
+            // constrained to this device's subnet — the network part is locked
+            // ahead of the field and an out-of-range address is rejected.
             if isLanOnly {
-                TextField("Host IP (optional)", text: $ipDraft)
-                    .font(.system(.body, design: .monospaced))
-                    .keyboardType(.numbersAndPunctuation)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                if !ipValid {
+                HStack(spacing: 2) {
+                    if !ipContext.prefix.isEmpty {
+                        Text(ipContext.prefix)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    TextField(ipContext.prefix.isEmpty ? "Host IP (optional)" : "15",
+                              text: $ipDraft)
+                        .font(.system(.body, design: .monospaced))
+                        .keyboardType(.numbersAndPunctuation)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onChange(of: ipDraft) { _, _ in refreshIPValidation() }
+                }
+                if !ipContext.hint.isEmpty {
+                    Text(ipContext.hint)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                switch ipOutcome {
+                case .outOfRange:
+                    Text("IP out of range for \(ipContext.label)")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                case .malformed:
                     Text("Not a valid IPv4 address.")
                         .font(.footnote)
                         .foregroundStyle(.orange)
+                case .empty, .inRange:
+                    EmptyView()
                 }
             }
             Button("Join") {
                 if let pin = canonicalPIN {
-                    controller.joinQuick(pin: pin, ip: isLanOnly ? ipDraft : nil)
+                    controller.joinQuick(pin: pin, ip: isLanOnly ? resolvedIP : nil)
                 }
             }
-            .disabled(canonicalPIN == nil || (isLanOnly && !ipValid))
+            .disabled(canonicalPIN == nil || (isLanOnly && !ipReady))
         } header: {
             Text("Enter a PIN")
         } footer: {
