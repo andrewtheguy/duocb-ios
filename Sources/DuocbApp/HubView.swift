@@ -15,6 +15,8 @@ struct HubView: View {
             failureSections
             identitySection
             actionsSection
+            quickSection
+            versionSection
         }
         .confirmationDialog(
             "Clear the shared secret?",
@@ -103,20 +105,38 @@ struct HubView: View {
             } label: {
                 Label("Join another device", systemImage: "personalhotspot")
             }
-            Button {
-                step = .quick
-            } label: {
-                Label("Quick pair with a PIN", systemImage: "bolt")
-            }
         } header: {
             Text("Pair")
         } footer: {
             Text("""
                 Start makes this device host the connection — the other device \
                 joins it. Join shows your other devices and connects to the one \
-                that started. Quick pair connects to any duocb device via a \
-                short PIN, even one that doesn't share your secret.
+                that started.
                 """)
+        }
+    }
+
+    private var quickSection: some View {
+        Section {
+            Button {
+                step = .quick
+            } label: {
+                Label("Quick pair with a PIN", systemImage: "bolt")
+            }
+        } footer: {
+            Text("""
+                Quick pair connects to any duocb device via a short PIN, even \
+                one that doesn't share your secret.
+                """)
+        }
+    }
+
+    /// The app version, in the normal scroll flow at the bottom of the hub.
+    private var versionSection: some View {
+        Section {
+        } footer: {
+            Text("duocb v\(ConfigureView.appVersion)")
+                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }

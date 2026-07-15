@@ -39,13 +39,6 @@ struct ConfigureView: View {
             }
         }
         .navigationTitle("duocb")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Text("v\(Self.appVersion)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
         .onAppear {
             if step == nil {
                 step = derivedStep
