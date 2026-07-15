@@ -19,8 +19,8 @@ func localBinaryTarget() -> Target? {
 
 let binaryTarget = localBinaryTarget() ?? .binaryTarget(
     name: "libduocb",
-    url: "https://github.com/andrewtheguy/duocb/releases/download/v0.0.25/libduocb-ios.xcframework.zip",
-    checksum: "dd845fddf395a78d96c174b8b2827296134db4a0dd8451f4e65972b2d4312e76"
+    url: "https://github.com/andrewtheguy/duocb/releases/download/v0.0.26/libduocb-ios.xcframework.zip",
+    checksum: "62b371e41fbd50bbf62d0b5fa5e0f901f705d4d79284755d4d71a0fa8768b270"
 )
 
 let package = Package(
