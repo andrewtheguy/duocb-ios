@@ -39,12 +39,24 @@ struct ConfigureView: View {
             }
         }
         .navigationTitle("duocb")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Text("v\(Self.appVersion)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
         .onAppear {
             if step == nil {
                 step = derivedStep
             }
         }
     }
+
+    /// This build's marketing version (`CFBundleShortVersionString`), shown on
+    /// the home screen.
+    static let appVersion =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
 
     /// Where the stored identity puts us: no secret → wizard start; secret but
     /// no confirmed name → naming; both → the hub.
