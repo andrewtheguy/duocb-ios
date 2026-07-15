@@ -1,4 +1,5 @@
 import SwiftUI
+import Network
 
 /// Quick pair (the desktop "P" and "L" presets): ephemeral pairing with any
 /// duocb device via a short rotating PIN — no shared secret, name, or
@@ -12,10 +13,22 @@ struct QuickPairView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: ConfigureView.Step
     @State private var draft = ""
+    @State private var ipDraft = ""
     @State private var channel: SessionController.QuickChannel = .nostrLan
 
     private var canonicalPIN: String? {
         SessionController.normalizePIN(draft)
+    }
+
+    /// A complete, valid LAN-only PIN reveals the optional host-IP field (the
+    /// FFI reads the channel from the PIN, so this mirrors that classification).
+    private var isLanOnly: Bool {
+        SessionController.pinIsLanOnly(draft)
+    }
+
+    /// The host-IP entry is optional; when present it must be a dotted-quad IPv4.
+    private var ipValid: Bool {
+        ipDraft.isEmpty || IPv4Address(ipDraft) != nil
     }
 
     var body: some View {
@@ -84,16 +97,31 @@ struct QuickPairView: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
-            Button("Join") {
-                if let pin = canonicalPIN {
-                    controller.joinQuick(pin: pin)
+            // LAN-only PIN: an optional host IP pairs over the unicast side
+            // channel when the device isn't found automatically (multicast
+            // blocked). Blank resolves via mDNS as usual.
+            if isLanOnly {
+                TextField("Host IP (optional)", text: $ipDraft)
+                    .font(.system(.body, design: .monospaced))
+                    .keyboardType(.numbersAndPunctuation)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                if !ipValid {
+                    Text("Not a valid IPv4 address.")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
                 }
             }
-            .disabled(canonicalPIN == nil)
+            Button("Join") {
+                if let pin = canonicalPIN {
+                    controller.joinQuick(pin: pin, ip: isLanOnly ? ipDraft : nil)
+                }
+            }
+            .disabled(canonicalPIN == nil || (isLanOnly && !ipValid))
         } header: {
             Text("Enter a PIN")
         } footer: {
-            Text("Type the PIN shown on the hosting device — its channel is taken from the PIN automatically.")
+            Text("Type the PIN shown on the hosting device — its channel is taken from the PIN automatically. For a local-network PIN you can add the host's IP if it isn't found automatically.")
         }
     }
 

@@ -74,6 +74,9 @@ final class SessionController {
     private(set) var pinDisplay: String?
     /// Quick host: when the displayed PIN rotates away.
     private(set) var pinDeadline: Date?
+    /// Quick host, LAN-only channel: this device's LAN IPv4, shown so the joiner
+    /// can type it for the manual-IP side channel (nil on other channels).
+    private(set) var hostLanIP: String?
     /// Received items, newest first, capped like the desktop inbox.
     private(set) var inbox: [ClipItem] = []
     /// The last successfully sent item.
@@ -133,8 +136,9 @@ final class SessionController {
     private var peerListVisible = false
     /// The last session start, for Reconnect after a failure. `peer` carries
     /// the target display identity (join) or the canonical PIN (quickJoin);
-    /// `channel` the quick-pair channel (nil for configure-mode roles).
-    private(set) var lastSession: (role: Role, peer: String?, channel: QuickChannel?)?
+    /// `channel` the quick-pair channel (nil for configure-mode roles); `ip` the
+    /// optional host IP for a LAN-only quickJoin (nil otherwise).
+    private(set) var lastSession: (role: Role, peer: String?, channel: QuickChannel?, ip: String?)?
 
     var isSessionActive: Bool { handle != nil && currentRole != .hub }
     var isQuickSession: Bool { currentRole?.isQuick ?? false }
@@ -153,13 +157,14 @@ final class SessionController {
     /// E2E-test hook (Simulator/Debug only): set up the identity and start a
     /// session straight from launch environment variables so a test harness
     /// can drive pairing without UI automation. Pass via `xcrun simctl launch`
-    /// with SIMCTL_CHILD_DUOCB_AUTOSTART_{TOKEN,NAME,ROLE,PEER,PIN,CHANNEL,SEND};
+    /// with SIMCTL_CHILD_DUOCB_AUTOSTART_{TOKEN,NAME,ROLE,PEER,PIN,IP,CHANNEL,SEND};
     /// ROLE=join requires PEER (the target's display identity), ROLE=quick_join
-    /// requires PIN (quick roles need no TOKEN), CHANNEL selects the quick_host
-    /// channel ("lan" for the LAN-only preset, default "nostr_lan"; quick_join
-    /// ignores it — the channel is read from the PIN), and omitting ROLE lands
-    /// on the hub with the identity configured (dormant — nostr wakes only on
-    /// Start/Join).
+    /// requires PIN (quick roles need no TOKEN) and takes an optional IP (the
+    /// host's LAN IPv4 for a LAN-only PIN's unicast side channel), CHANNEL
+    /// selects the quick_host channel ("lan" for the LAN-only preset, default
+    /// "nostr_lan"; quick_join ignores it — the channel is read from the PIN),
+    /// and omitting ROLE lands on the hub with the identity configured (dormant
+    /// — nostr wakes only on Start/Join).
     func autostartFromEnvironment() {
         let env = ProcessInfo.processInfo.environment
         guard !isSessionActive else { return }
@@ -173,7 +178,7 @@ final class SessionController {
         case "quick_join":
             if let pin = env["DUOCB_AUTOSTART_PIN"].flatMap(Self.normalizePIN) {
                 autosendText = env["DUOCB_AUTOSTART_SEND"]
-                joinQuick(pin: pin)
+                joinQuick(pin: pin, ip: env["DUOCB_AUTOSTART_IP"])
             }
             return
         default:
@@ -236,6 +241,13 @@ final class SessionController {
         var buf = [CChar](repeating: 0, count: 16)
         let rc = input.withCString { duocb_normalize_pin($0, &buf, buf.count) }
         return rc == 1 ? String(cString: buf) : nil
+    }
+
+    /// Whether a typed PIN is LAN-only (its first character encodes the channel),
+    /// so the join screen can reveal the optional host-IP field. Any user-typed
+    /// form is accepted; a non-LAN-only or invalid PIN returns false.
+    nonisolated static func pinIsLanOnly(_ input: String) -> Bool {
+        input.withCString { duocb_pin_is_lan_only($0) == 1 }
     }
 
     /// nil if valid, else the reason (mirrors duocb-core identity::validate_name).
@@ -367,28 +379,36 @@ final class SessionController {
 
     /// Quick pair: dial the PIN shown on the other device. `canonical` comes
     /// from `normalizePIN` (the FFI re-checks it anyway). No channel argument —
-    /// the FFI reads the rendezvous channel from the PIN's first character.
-    func joinQuick(pin canonical: String) {
-        startSession(role: .quickJoin, peer: canonical, channel: nil)
+    /// the FFI reads the rendezvous channel from the PIN's first character. `ip`
+    /// is the optional host IP for a LAN-only PIN (the unicast side channel);
+    /// nil/blank resolves via mDNS.
+    func joinQuick(pin canonical: String, ip: String? = nil) {
+        let ip = ip?.trimmingCharacters(in: .whitespaces)
+        startSession(role: .quickJoin, peer: canonical, ip: ip?.isEmpty == false ? ip : nil)
     }
 
-    private func startSession(role: Role, peer: String?, channel: QuickChannel? = nil) {
+    private func startSession(
+        role: Role,
+        peer: String?,
+        channel: QuickChannel? = nil,
+        ip: String? = nil
+    ) {
         guard !stopping else { return } // a transition is already in flight
         lastError = nil
-        lastSession = (role, peer, channel)
+        lastSession = (role, peer, channel, ip)
         // Instant feedback; the runtime's own status events take over once the
         // old instance (hub or previous session) has wound down off-thread.
         phase = .starting
         teardown { [weak self] in
             guard let self else { return }
-            _ = self.startRuntime(role: role, peer: peer, channel: channel)
+            _ = self.startRuntime(role: role, peer: peer, channel: channel, ip: ip)
         }
     }
 
     /// Re-run the last session after a failure (offered on the hub).
     func reconnect() {
         guard let s = lastSession else { return }
-        startSession(role: s.role, peer: s.peer, channel: s.channel)
+        startSession(role: s.role, peer: s.peer, channel: s.channel, ip: s.ip)
     }
 
     /// Stop the session and return to the hub, now dormant: nostr stays off
@@ -417,12 +437,21 @@ final class SessionController {
     /// Start a runtime instance — with the stored identity for configure-mode
     /// roles, identity-less for quick roles. Returns false (and records the
     /// failure) when it could not start.
-    private func startRuntime(role: Role, peer: String?, channel: QuickChannel? = nil) -> Bool {
+    private func startRuntime(
+        role: Role,
+        peer: String?,
+        channel: QuickChannel? = nil,
+        ip: String? = nil
+    ) -> Bool {
         var config: [String: Any] = ["role": role.rawValue]
         if role.isQuick {
             if role == .quickJoin {
-                // No channel on join — the FFI infers it from the PIN.
+                // No channel on join — the FFI infers it from the PIN. An
+                // optional IP selects the unicast side channel (LAN-only PIN).
                 config["pin"] = peer
+                if let ip, !ip.isEmpty {
+                    config["ip"] = ip
+                }
             } else {
                 config["channel"] = (channel ?? .nostrLan).rawValue
             }
@@ -483,6 +512,7 @@ final class SessionController {
         joinedPeer = nil
         pinDisplay = nil
         pinDeadline = nil
+        hostLanIP = nil
         connPaths = nil
         pendingOutbox = nil
         guard let handle else {
@@ -643,10 +673,13 @@ final class SessionController {
         case "pin_rotated":
             pinDisplay = object["pin_display"] as? String
             pinDeadline = .now.addingTimeInterval(object["seconds_left"] as? Double ?? 60)
+            // LAN-only channel only; null (→ nil) on others.
+            hostLanIP = object["host_lan_ip"] as? String
 
         case "pin_cleared":
             pinDisplay = nil
             pinDeadline = nil
+            hostLanIP = nil
 
         case "peer_paired":
             peerNodeID = object["peer_node_id"] as? String
