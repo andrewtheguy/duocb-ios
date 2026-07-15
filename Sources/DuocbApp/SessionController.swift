@@ -253,13 +253,15 @@ final class SessionController {
     /// How the LAN-only host-IP entry should be constrained to this device's own
     /// subnet (see `duocb_join_ip_context`). `prefix` is the locked network part
     /// the user types after (empty when no subnet was detected → free entry),
+    /// `placeholder` describes the editable tail for the field's placeholder,
     /// `hint` a range hint for a partial-octet subnet, `label` the CIDR for the
     /// out-of-range message.
     struct JoinIPContext {
         var prefix: String
+        var placeholder: String
         var hint: String
         var label: String
-        static let empty = JoinIPContext(prefix: "", hint: "", label: "")
+        static let empty = JoinIPContext(prefix: "", placeholder: "", hint: "", label: "")
     }
 
     nonisolated static func joinIPContext() -> JoinIPContext {
@@ -270,6 +272,7 @@ final class SessionController {
         else { return .empty }
         return JoinIPContext(
             prefix: obj["prefix"] as? String ?? "",
+            placeholder: obj["placeholder"] as? String ?? "",
             hint: obj["hint"] as? String ?? "",
             label: obj["label"] as? String ?? ""
         )

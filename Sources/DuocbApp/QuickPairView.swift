@@ -135,7 +135,7 @@ struct QuickPairView: View {
                             .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
                     }
-                    TextField(ipContext.prefix.isEmpty ? "Host IP (optional)" : "15",
+                    TextField(ipContext.prefix.isEmpty ? "Host IP (optional)" : ipContext.placeholder,
                               text: $ipDraft)
                         .font(.system(.body, design: .monospaced))
                         .keyboardType(.numbersAndPunctuation)
