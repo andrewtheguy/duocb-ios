@@ -1,9 +1,11 @@
 // Committed base signing config, referenced by project.yml (configFiles) so
 // Xcode/xcodebuild builds sign automatically.
 //
-// Do NOT put your Team ID here. Per-developer signing lives in the gitignored
-// Developer.local.xcconfig (copy Developer.local.xcconfig.sample and fill it in).
-// The optional include below pulls it in when present, so a fresh clone with no
-// local file still runs `xcodegen generate` and builds without error.
+// Do NOT put your Team ID or personal bundle ID here. Per-developer signing
+// lives in the gitignored Developer.local.xcconfig (copy
+// Developer.local.xcconfig.sample and fill it in). The optional include below
+// pulls it in when present, so a fresh clone with no local file still runs
+// `xcodegen generate` and unsigned CI builds without error.
 DEVELOPMENT_TEAM =
+DUOCB_BUNDLE_IDENTIFIER = com.andrewtheguy.duocb
 #include? "Developer.local.xcconfig"
