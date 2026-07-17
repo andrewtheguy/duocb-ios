@@ -113,10 +113,13 @@ with its UTC build time and short commit hash, for example
 
 Neither the IPA nor the archive is installable as downloaded. Before installing
 it, sign the app locally with your own Apple signing certificate and a
-provisioning profile that includes the destination device. The signer must also
-replace the default `com.andrewtheguy.duocb` bundle identifier with a unique App
-ID registered to your developer team. Do not send an Apple password, signing
-certificate, or private key to this repository or an untrusted signing service.
+provisioning profile that includes the destination device. Keep the default
+`com.andrewtheguy.duocb` bundle identifier only when signing for a team that
+owns it; otherwise replace it with a unique App ID registered to your developer
+team. Follow the tested [unsigned IPA signing guide](docs/signing-unsigned-ipa.md)
+for checksum verification, signing, validation, repackaging, and installation.
+Do not send an Apple password, signing certificate, or private key to this
+repository or an untrusted signing service.
 
 Development and release-testing profiles only work on devices included by that
 profile. TestFlight and App Store distribution require an app record and signing
