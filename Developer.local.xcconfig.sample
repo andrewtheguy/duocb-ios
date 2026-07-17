@@ -1,4 +1,6 @@
 // Copy this file to Developer.local.xcconfig and fill in your Apple Developer
-// Team ID. Developer.local.xcconfig is gitignored so each developer uses their
-// own team; the committed Developer.xcconfig #include?s it automatically.
+// Team ID and a unique reverse-DNS bundle identifier. Developer.local.xcconfig
+// is gitignored so each developer uses their own signing identity; the
+// committed Developer.xcconfig #include?s it automatically.
 DEVELOPMENT_TEAM =
+DUOCB_BUNDLE_IDENTIFIER = com.example.duocb

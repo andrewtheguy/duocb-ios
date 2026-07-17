@@ -1,0 +1,98 @@
+name: Build unsigned iOS artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build unsigned IPA and archive
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    env:
+      ARCHIVE_PATH: ${{ runner.temp }}/duocb-ios-unsigned.xcarchive
+      ARTIFACT_DIR: ${{ runner.temp }}/duocb-ios-artifacts
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned device archive
+        run: |
+          xcodebuild archive \
+            -project Duocb.xcodeproj \
+            -scheme DuocbApp \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -sdk iphoneos \
+            -archivePath "$ARCHIVE_PATH" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM=
+
+      - name: Package and verify unsigned artifacts
+        run: |
+          app_path="$ARCHIVE_PATH/Products/Applications/duocb.app"
+          package_root="$RUNNER_TEMP/duocb-ipa"
+
+          if [[ ! -d "$app_path" ]]; then
+            echo "::error::Archived app not found at $app_path"
+            exit 1
+          fi
+
+          if codesign --display "$app_path" >/dev/null 2>&1; then
+            echo "::error::The archived app unexpectedly has a code signature"
+            exit 1
+          fi
+
+          mkdir -p "$ARTIFACT_DIR" "$package_root/Payload"
+          ditto --norsrc --noextattr --noqtn --noacl \
+            "$app_path" \
+            "$package_root/Payload/duocb.app"
+          ditto -c -k --keepParent \
+            --norsrc --noextattr --noqtn --noacl \
+            "$package_root/Payload" \
+            "$ARTIFACT_DIR/duocb-unsigned.ipa"
+          ditto -c -k --keepParent \
+            --norsrc --noextattr --noqtn --noacl \
+            "$ARCHIVE_PATH" \
+            "$ARTIFACT_DIR/duocb-ios-unsigned.xcarchive.zip"
+
+          unzip -tq "$ARTIFACT_DIR/duocb-unsigned.ipa"
+          unzip -tq "$ARTIFACT_DIR/duocb-ios-unsigned.xcarchive.zip"
+
+          if unzip -Z1 "$ARTIFACT_DIR/duocb-unsigned.ipa" \
+            | grep -Eq '(^|/)(__MACOSX|\._)'; then
+            echo "::error::The IPA contains unexpected macOS metadata"
+            exit 1
+          fi
+
+          (
+            cd "$ARTIFACT_DIR"
+            shasum -a 256 \
+              duocb-unsigned.ipa \
+              duocb-ios-unsigned.xcarchive.zip \
+              > SHA256SUMS.txt
+          )
+
+      - name: Upload unsigned IPA and archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: duocb-ios-unsigned-${{ github.run_number }}
+          path: ${{ runner.temp }}/duocb-ios-artifacts/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

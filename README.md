@@ -70,11 +70,13 @@ also runs in the Simulator.
    (`Packages/Duocb`), which downloads the pinned `libduocb-ios.xcframework.zip`
    release asset by URL + checksum.
 
-2. Signing (once): copy the sample and set your Team ID —
+2. Signing (once): copy the sample, set your Team ID, and choose a unique
+   reverse-DNS bundle identifier —
 
    ```sh
    cp Developer.local.xcconfig.sample Developer.local.xcconfig
    # edit DEVELOPMENT_TEAM = YOURTEAMID
+   # edit DUOCB_BUNDLE_IDENTIFIER = com.yourname.duocb
    ```
 
 3. Run on a device or Simulator. The setup wizard runs on first launch:
@@ -93,6 +95,37 @@ building from the CLI:
 xcodebuild -project Duocb.xcodeproj -scheme DuocbApp \
   -destination 'platform=iOS Simulator,name=iPhone 17' build
 ```
+
+## Unsigned release artifacts
+
+The [`Build unsigned iOS artifacts`](.github/workflows/unsigned-ios.yml) GitHub
+Actions workflow runs for `v*` tags and can also be started manually from the
+Actions tab. It builds without an Apple certificate, Team ID, or provisioning
+profile. Each run uploads one artifact, retained for 30 days, containing:
+
+- `duocb-unsigned.ipa` — an unsigned device build for a trusted local IPA
+  signing tool.
+- `duocb-ios-unsigned.xcarchive.zip` — the complete unsigned Xcode archive for
+  manual signing or inspection on a Mac.
+- `SHA256SUMS.txt` — SHA-256 checksums for both files.
+
+Neither the IPA nor the archive is installable as downloaded. Before installing
+it, sign the app locally with your own Apple signing certificate and a
+provisioning profile that includes the destination device. The signer must also
+replace the default `com.andrewtheguy.duocb` bundle identifier with a unique App
+ID registered to your developer team. Do not send an Apple password, signing
+certificate, or private key to this repository or an untrusted signing service.
+
+Development and release-testing profiles only work on devices included by that
+profile. TestFlight and App Store distribution require an app record and signing
+assets owned by the submitting developer team. This project currently has no
+special signing entitlements or app extensions, which keeps re-signing
+straightforward.
+
+For the Apple-supported Xcode signing flow, build from source instead: configure
+`Developer.local.xcconfig` as described above, then run
+`scripts/create-archive-ios.sh --allow-provisioning-updates`. This produces a
+signed archive and IPA using your developer team and bundle identifier.
 
 ## Local FFI development
 
@@ -118,7 +151,8 @@ SPM forbids binary-target paths outside the package root, so the sibling's
   at a duocb release (downloads the zip, computes the SPM checksum, rewrites
   url + checksum; defaults to the latest release).
 - `scripts/create-archive-ios.sh` — Release `.xcarchive` + exported `.ipa`
-  into `build/`.
+  into `build/`, signed with the team and bundle ID from
+  `Developer.local.xcconfig`.
 - `scripts/list-devices-ios.sh` / `scripts/run-device-ios.sh` — build, install,
   and launch on a paired physical device.
 - `scripts/render-icons.swift` — regenerate the app icon set + `icon.svg`.
