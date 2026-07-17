@@ -16,7 +16,7 @@ struct HubView: View {
             identitySection
             actionsSection
             quickSection
-            versionSection
+            AppVersionSection()
         }
         .confirmationDialog(
             "Clear the shared secret?",
@@ -128,15 +128,6 @@ struct HubView: View {
                 Quick pair connects to any duocb device via a short PIN, even \
                 one that doesn't share your secret.
                 """)
-        }
-    }
-
-    /// The app version, in the normal scroll flow at the bottom of the hub.
-    private var versionSection: some View {
-        Section {
-        } footer: {
-            Text("duocb v\(ConfigureView.appVersion)")
-                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }

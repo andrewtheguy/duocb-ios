@@ -109,6 +109,18 @@ private struct SecretChoiceView: View {
                     secret or setup needed.
                     """)
             }
+            AppVersionSection()
+        }
+    }
+}
+
+/// The app version, in the normal scroll flow at the bottom of home screens.
+struct AppVersionSection: View {
+    var body: some View {
+        Section {
+        } footer: {
+            Text("duocb v\(ConfigureView.appVersion)")
+                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 }
