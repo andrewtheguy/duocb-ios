@@ -76,6 +76,7 @@ targets:
         product: libduocb
     settings:
       base:
+        PRODUCT_NAME: duocb
         PRODUCT_BUNDLE_IDENTIFIER: com.andrewtheguy.duocb
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Sources/DuocbApp/DuocbApp.entitlements
