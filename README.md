@@ -20,8 +20,10 @@ It also supports **quick pair**: ephemeral pairing with any duocb device —
 even one that doesn't share your secret — via a short rotating PIN, with no
 setup at all (it's offered on the first screen and on the hub). One device
 shows the PIN, the other types it; the PIN renews every 60 seconds until a
-device pairs. A **channel** menu picks how the PIN is found, matching the
-desktop presets — choose the same channel on both devices:
+device pairs. The host accepts only its current PIN and the PIN from the
+immediately previous rotation; anything older is rejected. A **channel** menu
+picks how the PIN is found, matching the desktop presets — choose the same
+channel on both devices:
 
 - **Internet + local network** (default; the desktop **P** preset) — the
   rendezvous rides public nostr relays. Works across networks; the connection
