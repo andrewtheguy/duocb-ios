@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -91,3 +91,21 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          artifact_dir="$RUNNER_TEMP/duocb-ios-artifacts"
+          release_id="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA:0:7}"
+
+          gh release create "$release_id" \
+            "$artifact_dir/duocb-unsigned.ipa" \
+            "$artifact_dir/duocb-ios-unsigned.xcarchive.zip" \
+            "$artifact_dir/SHA256SUMS.txt" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$release_id" \
+            --notes "Unsigned iOS artifacts built from commit $GITHUB_SHA." \
+            --prerelease \
+            --latest=false

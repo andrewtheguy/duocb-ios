@@ -98,10 +98,12 @@ xcodebuild -project Duocb.xcodeproj -scheme DuocbApp \
 
 ## Unsigned release artifacts
 
-The [`Build unsigned iOS artifacts`](.github/workflows/unsigned-ios.yml) GitHub
-Actions workflow runs for `v*` tags and can also be started manually from the
-Actions tab. It builds without an Apple certificate, Team ID, or provisioning
-profile. Each run uploads one artifact, retained for 30 days, containing:
+Start the [`Build unsigned iOS artifacts`](.github/workflows/unsigned-ios.yml)
+GitHub Actions workflow manually from the Actions tab. It builds without an
+Apple certificate, Team ID, or provisioning profile. Each run uploads an
+Actions artifact retained for 30 days and publishes a GitHub prerelease named
+with its UTC build time and short commit hash, for example
+`20260717164908-3b6e789`. Both contain:
 
 - `duocb-unsigned.ipa` — an unsigned device build for a trusted local IPA
   signing tool.
