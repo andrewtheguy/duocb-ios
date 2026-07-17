@@ -81,7 +81,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Sources/DuocbApp/DuocbApp.entitlements
         INFOPLIST_FILE: Sources/DuocbApp/Info.plist
-        MARKETING_VERSION: "0.0.27"
+        MARKETING_VERSION: "0.0.28"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_OBJC_BRIDGING_HEADER: Sources/DuocbApp/Bridging-Header.h
         # No HEADER_SEARCH_PATHS needed: SPM puts the binary target's embedded

@@ -92,8 +92,8 @@ struct SessionView: View {
                 Text("PIN")
             } footer: {
                 Text(controller.hostLanIP == nil
-                    ? "Enter this PIN on the other device to pair. New PIN replaces it right away and stops every earlier one from working."
-                    : "Enter this PIN on the other device to pair. If it isn't found automatically, also type the local IP shown above. New PIN replaces it right away and stops every earlier one from working.")
+                    ? "Enter this PIN on the other device to pair. Automatic renewal keeps only the current and immediately previous PIN valid. New PIN replaces it right away and stops every earlier one from working."
+                    : "Enter this PIN on the other device to pair. If it isn't found automatically, also type the local IP shown above. Automatic renewal keeps only the current and immediately previous PIN valid. New PIN replaces it right away and stops every earlier one from working.")
             }
         }
     }
