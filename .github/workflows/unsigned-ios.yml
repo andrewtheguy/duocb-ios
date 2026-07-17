@@ -9,12 +9,8 @@ permissions:
 jobs:
   build:
     name: Build unsigned IPA and archive
-    runs-on: macos-15
+    runs-on: macos-latest
     timeout-minutes: 30
-
-    env:
-      ARCHIVE_PATH: ${{ runner.temp }}/duocb-ios-unsigned.xcarchive
-      ARTIFACT_DIR: ${{ runner.temp }}/duocb-ios-artifacts
 
     steps:
       - name: Check out repository
@@ -34,7 +30,7 @@ jobs:
             -configuration Release \
             -destination "generic/platform=iOS" \
             -sdk iphoneos \
-            -archivePath "$ARCHIVE_PATH" \
+            -archivePath "$RUNNER_TEMP/duocb-ios-unsigned.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= \
@@ -42,7 +38,9 @@ jobs:
 
       - name: Package and verify unsigned artifacts
         run: |
-          app_path="$ARCHIVE_PATH/Products/Applications/duocb.app"
+          archive_path="$RUNNER_TEMP/duocb-ios-unsigned.xcarchive"
+          artifact_dir="$RUNNER_TEMP/duocb-ios-artifacts"
+          app_path="$archive_path/Products/Applications/duocb.app"
           package_root="$RUNNER_TEMP/duocb-ipa"
 
           if [[ ! -d "$app_path" ]]; then
@@ -55,30 +53,30 @@ jobs:
             exit 1
           fi
 
-          mkdir -p "$ARTIFACT_DIR" "$package_root/Payload"
+          mkdir -p "$artifact_dir" "$package_root/Payload"
           ditto --norsrc --noextattr --noqtn --noacl \
             "$app_path" \
             "$package_root/Payload/duocb.app"
           ditto -c -k --keepParent \
             --norsrc --noextattr --noqtn --noacl \
             "$package_root/Payload" \
-            "$ARTIFACT_DIR/duocb-unsigned.ipa"
+            "$artifact_dir/duocb-unsigned.ipa"
           ditto -c -k --keepParent \
             --norsrc --noextattr --noqtn --noacl \
-            "$ARCHIVE_PATH" \
-            "$ARTIFACT_DIR/duocb-ios-unsigned.xcarchive.zip"
+            "$archive_path" \
+            "$artifact_dir/duocb-ios-unsigned.xcarchive.zip"
 
-          unzip -tq "$ARTIFACT_DIR/duocb-unsigned.ipa"
-          unzip -tq "$ARTIFACT_DIR/duocb-ios-unsigned.xcarchive.zip"
+          unzip -tq "$artifact_dir/duocb-unsigned.ipa"
+          unzip -tq "$artifact_dir/duocb-ios-unsigned.xcarchive.zip"
 
-          if unzip -Z1 "$ARTIFACT_DIR/duocb-unsigned.ipa" \
+          if unzip -Z1 "$artifact_dir/duocb-unsigned.ipa" \
             | grep -Eq '(^|/)(__MACOSX|\._)'; then
             echo "::error::The IPA contains unexpected macOS metadata"
             exit 1
           fi
 
           (
-            cd "$ARTIFACT_DIR"
+            cd "$artifact_dir"
             shasum -a 256 \
               duocb-unsigned.ipa \
               duocb-ios-unsigned.xcarchive.zip \
