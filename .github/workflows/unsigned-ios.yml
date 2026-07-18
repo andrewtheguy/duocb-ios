@@ -48,8 +48,32 @@ jobs:
             exit 1
           fi
 
-          if codesign --display "$app_path" >/dev/null 2>&1; then
-            echo "::error::The archived app unexpectedly has a code signature"
+          while IFS= read -r bundle; do
+            if codesign --display "$bundle" >/dev/null 2>&1; then
+              echo "::error::$bundle unexpectedly has a code signature"
+              exit 1
+            fi
+          done < <(
+            find "$app_path" -type d \
+              \( -name "*.app" -o -name "*.appex" -o -name "*.framework" \) \
+              -print
+          )
+
+          if find "$app_path" -name embedded.mobileprovision -print -quit \
+            | grep -q .; then
+            echo "::error::The archived app unexpectedly embeds a profile"
+            exit 1
+          fi
+
+          if [[ -z "$(plutil -extract NSLocalNetworkUsageDescription raw \
+            -o - "$app_path/Info.plist")" ]]; then
+            echo "::error::The archived app lost its local network usage description"
+            exit 1
+          fi
+
+          if [[ "$(plutil -extract NSBonjourServices.0 raw -o - \
+            "$app_path/Info.plist")" != "_duocb-pin._udp" ]]; then
+            echo "::error::The archived app lost its Bonjour service declaration"
             exit 1
           fi
 
