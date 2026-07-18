@@ -107,10 +107,17 @@ struct SessionView: View {
                 Text(statusText)
             }
             // Quick sessions are identity-less; the broadcast identity only
-            // applies to configure-mode sessions.
+            // applies to configure-mode sessions. In quick mode, show this
+            // device's own truncated iroh id instead so the connected screen
+            // always identifies both ends by node id.
             if !controller.isQuickSession, let identity = controller.displayIdentity {
                 LabeledContent("This device") {
                     Text(identity).font(.system(.footnote, design: .monospaced))
+                }
+            }
+            if controller.isQuickSession, let ownID = controller.nodeID {
+                LabeledContent("This device") {
+                    Text(shortNodeID(ownID)).font(.system(.footnote, design: .monospaced))
                 }
             }
             if let joined = controller.joinedPeer {
