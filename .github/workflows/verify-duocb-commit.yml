@@ -42,8 +42,10 @@ jobs:
         env:
           DUOCB_SHA: ${{ inputs.duocb_sha }}
         run: |
-          actual_sha="$(git -C duocb rev-parse HEAD)"
-          if [[ "${actual_sha,,}" != "${DUOCB_SHA,,}" ]]; then
+          # macOS runners ship bash 3.2, which lacks ${var,,} — lowercase via tr.
+          actual_sha="$(git -C duocb rev-parse HEAD | tr '[:upper:]' '[:lower:]')"
+          expected_sha="$(printf '%s' "$DUOCB_SHA" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$actual_sha" != "$expected_sha" ]]; then
             echo "::error::Expected duocb commit $DUOCB_SHA, checked out $actual_sha"
             exit 1
           fi
