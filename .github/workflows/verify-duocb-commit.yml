@@ -52,10 +52,12 @@ jobs:
           echo "Using duocb commit $actual_sha"
 
       # Cache the Rust build the same way the duocb repo's own release
-      # workflow does; the workspace lives in the duocb/ checkout.
+      # workflow does; the workspace lives in the duocb/ checkout. Save even
+      # when a later (Xcode) step fails — the Rust build is still good.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: duocb
+          cache-on-failure: true
 
       - name: Build duocb XCFramework
         working-directory: duocb
@@ -75,6 +77,8 @@ jobs:
           DUOCB_LOCAL_XCFRAMEWORK: "1"
         run: xcodegen generate
 
+      # ARCHS=arm64: libduocb.xcframework is arm64-only, and the generic
+      # simulator destination otherwise builds x86_64 and fails to link.
       - name: Verify iOS Simulator build
         env:
           DUOCB_LOCAL_XCFRAMEWORK: "1"
@@ -85,6 +89,7 @@ jobs:
             -configuration Debug \
             -destination "generic/platform=iOS Simulator" \
             -sdk iphonesimulator \
+            ARCHS=arm64 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY= \

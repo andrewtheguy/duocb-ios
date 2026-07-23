@@ -454,8 +454,19 @@ final class SessionController {
         }
     }
 
-    /// Re-run the last session after a failure (offered on the hub).
+    /// Resume the session after a failure. A parked session (it ended on its
+    /// own but the runtime was kept alive — see `fail`) resumes on the same
+    /// runtime via duocb_reconnect, which reuses the session identity: the
+    /// same node id dials the same pinned target, so the already-paired peer
+    /// accepts it without re-pairing or a fresh PIN. Only when no runtime is
+    /// left (it died, or starting never succeeded) does this fall back to a
+    /// full restart with a fresh identity.
     func reconnect() {
+        if let handle, currentRole != .hub, !stopping, duocb_reconnect(handle) == 0 {
+            lastError = nil
+            phase = .starting
+            return
+        }
         guard let s = lastSession else { return }
         startSession(role: s.role, peer: s.peer, channel: s.channel, ip: s.ip)
     }
@@ -580,16 +591,28 @@ final class SessionController {
         }
     }
 
-    /// Mark the current instance dead (runtime ended on its own) and free the
-    /// handle, keeping the failure visible on the right screen.
+    /// Surface a session/hub failure. A failed hub restarts to keep browsing
+    /// alive. A failed session whose runtime is still alive is *parked*, not
+    /// stopped: the runtime holds the session identity and pairing state
+    /// (node id, pair claim, pinned dial target) for as long as it runs, so
+    /// keeping it lets Reconnect resume the same pairing (`duocb_reconnect`)
+    /// where a stop + fresh start would mint a new identity the already-paired
+    /// peer refuses. Stop, or starting anything else, still discards it. Only
+    /// a runtime that actually died is torn down here.
     private func fail(_ message: String) {
         if currentRole == .hub {
             // The hub only runs while the picker is open, so restart it to keep
             // browsing alive.
             hubError = message
             teardown { [weak self] in self?.startHub() }
+        } else if let handle, duocb_is_running(handle) == 1 {
+            // Parked: the session ended (e.g. the reconnect give-up) but the
+            // runtime lives on with the pairing memory. The session screen
+            // stays up, showing the failure with Reconnect and Stop.
+            phase = .failed(message)
         } else {
-            // A session died: drop to the dormant hub with the failure shown.
+            // The runtime itself died: drop to the dormant hub with the
+            // failure shown; Reconnect there does a full fresh start.
             phase = .failed(message)
             teardown {}
         }
