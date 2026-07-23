@@ -51,6 +51,12 @@ jobs:
           fi
           echo "Using duocb commit $actual_sha"
 
+      # Cache the Rust build the same way the duocb repo's own release
+      # workflow does; the workspace lives in the duocb/ checkout.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: duocb
+
       - name: Build duocb XCFramework
         working-directory: duocb
         run: ./build-ios.sh release
