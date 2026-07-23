@@ -106,6 +106,16 @@ struct SessionView: View {
                     .frame(width: 10, height: 10)
                 Text(statusText)
             }
+            // A failed session is parked, not stopped: the runtime keeps the
+            // pairing identity, so reconnecting resumes with the same node id
+            // and the peer accepts it without a new PIN.
+            if case .failed = controller.phase {
+                Button {
+                    controller.reconnect()
+                } label: {
+                    Label("Reconnect", systemImage: "arrow.clockwise")
+                }
+            }
             // Quick sessions are identity-less; the broadcast identity only
             // applies to configure-mode sessions. In quick mode, show this
             // device's own truncated iroh id instead so the connected screen
