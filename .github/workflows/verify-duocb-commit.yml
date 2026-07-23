@@ -1,0 +1,112 @@
+name: Verify duocb commit on iOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      duocb_sha:
+        description: Full 40-character commit SHA from andrewtheguy/duocb
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build iOS app with selected core commit
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out iOS repository
+        uses: actions/checkout@v6
+
+      - name: Validate duocb commit SHA
+        env:
+          DUOCB_SHA: ${{ inputs.duocb_sha }}
+        run: |
+          if [[ ! "$DUOCB_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::duocb_sha must be a full 40-character commit SHA"
+            exit 1
+          fi
+
+      - name: Check out selected duocb commit
+        uses: actions/checkout@v6
+        with:
+          repository: andrewtheguy/duocb
+          ref: ${{ inputs.duocb_sha }}
+          path: duocb
+          persist-credentials: false
+
+      - name: Verify checked-out commit
+        env:
+          DUOCB_SHA: ${{ inputs.duocb_sha }}
+        run: |
+          actual_sha="$(git -C duocb rev-parse HEAD)"
+          if [[ "${actual_sha,,}" != "${DUOCB_SHA,,}" ]]; then
+            echo "::error::Expected duocb commit $DUOCB_SHA, checked out $actual_sha"
+            exit 1
+          fi
+          echo "Using duocb commit $actual_sha"
+
+      - name: Build duocb XCFramework
+        working-directory: duocb
+        run: ./build-ios.sh release
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Use the selected local XCFramework
+        run: |
+          rm Packages/Duocb/local/libduocb.xcframework
+          ln -s "$GITHUB_WORKSPACE/duocb/dist/ios/libduocb.xcframework" \
+            Packages/Duocb/local/libduocb.xcframework
+
+      - name: Generate Xcode project
+        env:
+          DUOCB_LOCAL_XCFRAMEWORK: "1"
+        run: xcodegen generate
+
+      - name: Verify iOS Simulator build
+        env:
+          DUOCB_LOCAL_XCFRAMEWORK: "1"
+        run: |
+          xcodebuild build \
+            -project Duocb.xcodeproj \
+            -scheme DuocbApp \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -sdk iphonesimulator \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM=
+
+      - name: Build unsigned device archive
+        env:
+          DUOCB_LOCAL_XCFRAMEWORK: "1"
+        run: |
+          xcodebuild archive \
+            -project Duocb.xcodeproj \
+            -scheme DuocbApp \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -sdk iphoneos \
+            -archivePath "$RUNNER_TEMP/duocb-ios-unsigned.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM=
+
+      - name: Verify unsigned app was built
+        run: |
+          app_path="$RUNNER_TEMP/duocb-ios-unsigned.xcarchive/Products/Applications/duocb.app"
+          if [[ ! -d "$app_path" ]]; then
+            echo "::error::Unsigned app not found at $app_path"
+            exit 1
+          fi
+          if codesign --display "$app_path" >/dev/null 2>&1; then
+            echo "::error::The app unexpectedly has a code signature"
+            exit 1
+          fi
+          echo "Unsigned build succeeded for duocb commit ${{ inputs.duocb_sha }}"
