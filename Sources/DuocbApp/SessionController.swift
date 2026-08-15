@@ -4,22 +4,33 @@ import Observation
 /// Central view model: owns the Rust FFI handle, polls its event queue on a
 /// timer, and mirrors the desktop app's state machine.
 ///
-/// Three kinds of runtime instance exist, at most one at a time:
-/// - a **hub** instance (role "hub") runs while the device list is on screen:
-///   it broadcasts this device's presence and fetches the peer list, but never
-///   opens a session;
-/// - a **session** instance (role "start"/"join") hosts a connection or joins
-///   the hosting device picked from the list;
-/// - a **quick** instance (role "quick_host"/"quick_join") pairs with any
-///   device via a rotating short PIN — no secret, name, or suffix involved.
-/// Moving between them stops the current instance and starts a fresh one, as
-/// the FFI prescribes.
+/// # One handle, four roles, and a hub that runs nothing
 ///
-/// Identity persistence mirrors the desktop wizard: the secret is saved to the
-/// Keychain the moment it is generated or imported, the name to UserDefaults
-/// the moment it is confirmed, and the permanent suffix is minted once on
-/// first launch (Keychain) and never regenerated — it survives clearing the
-/// secret.
+/// The hub is **pure local state**. The trusted-device list is read from this
+/// app's own storage; nothing is broadcast and nothing is discovered, so no
+/// runtime instance exists while the hub is on screen. A handle is created only
+/// for a session, and there is at most one at a time:
+///
+/// - `start` / `join` — a clipboard session between two devices that already
+///   trust each other's cards;
+/// - `cardHost` / `cardJoin` — **card setup**, a short-lived session that
+///   exists only to swap identity cards and never carries clipboard content.
+///
+/// # Trust is imported, never inferred
+///
+/// A card that arrives over card setup is verified as well-formed and correctly
+/// signed and nothing more — the PIN is short enough that possession of it must
+/// not be enough to become a trusted device. So `incomingCard` is parked for
+/// the user to compare fingerprints against the other device's screen, and only
+/// `importIncomingCard()` writes it to the trusted list.
+///
+/// # Persistence commit points
+///
+/// The private key is saved to the Keychain the moment it is generated or
+/// imported; the device name and the freshly minted self-card the moment the
+/// name is confirmed; a peer's card the moment its fingerprint is confirmed.
+/// Editing a field alone never persists. The permanent suffix is minted once on
+/// first launch and survives an identity reset.
 @Observable @MainActor
 final class SessionController {
     enum Phase: Equatable {
@@ -35,48 +46,43 @@ final class SessionController {
     }
 
     enum Role: String {
-        case hub, start, join
-        case quickHost = "quick_host"
-        case quickJoin = "quick_join"
+        case start, join
+        case cardHost = "card_host"
+        case cardJoin = "card_join"
 
-        /// Quick roles are identity-less: no secret/name/suffix in the config.
-        var isQuick: Bool { self == .quickHost || self == .quickJoin }
+        /// Card setup never carries clipboard traffic; it trades cards and ends.
+        var isCardSetup: Bool { self == .cardHost || self == .cardJoin }
+        /// Hosts show a PIN or listen; joiners dial.
+        var isHost: Bool { self == .start || self == .cardHost }
     }
 
-    /// Which channel carries the quick-pair rendezvous (the FFI `channel`
-    /// config key). Chosen only when hosting; the joiner reads the channel from
-    /// the PIN's first character, so the two sides never have to be set to match.
-    enum QuickChannel: String, CaseIterable {
-        /// Nostr relays + LAN (the desktop "P" preset) — the default. On iOS
-        /// the relays carry the rendezvous; the connection itself can still
-        /// be LAN-direct.
-        case nostrLan = "nostr_lan"
-        /// LAN only (the desktop "L" preset): no third-party server at all.
-        /// The rendezvous is a Bonjour service registered through the system
-        /// daemon (so no multicast entitlement is involved) and the join
-        /// dials the direct addresses it resolves. Requires both devices on
-        /// the same network; joining triggers the Local Network permission
-        /// prompt on first use.
-        case lan
+    /// A card handed over by card setup, waiting on the user's fingerprint
+    /// check. Holding the encoded card alongside the decoded detail means
+    /// importing stores exactly the bytes that were verified.
+    struct IncomingCard: Equatable {
+        let card: String
+        let info: IdentityCardInfo
     }
 
     // MARK: - Session state
 
     private(set) var phase: Phase = .idle
     private(set) var nodeID: String?
-    private(set) var tokenFingerprint: String?
     private(set) var peerNodeID: String?
     /// Join role: the display identity of the device being joined.
     private(set) var joinedPeer: String?
     /// Non-nil while the connection-path sheet is up; refreshed by queryConnPath.
     var connPaths: [ConnPath]?
-    /// Quick host: the current PIN ("XXXX-XXXX"), until a peer pairs.
+    /// Card host: the current PIN ("XXXX-XXXX"), until a peer pairs.
     private(set) var pinDisplay: String?
-    /// Quick host: when the displayed PIN rotates away.
+    /// Card host: when the displayed PIN rotates away.
     private(set) var pinDeadline: Date?
-    /// Quick host, LAN-only channel: this device's LAN IPv4, shown so the joiner
-    /// can type it for the manual-IP side channel (nil on other channels).
+    /// Card host: this device's LAN IPv4, shown so the joiner can type it for
+    /// the manual-IP side channel (nil when the LAN channel is off, or before
+    /// an address is known).
     private(set) var hostLanIP: String?
+    /// The peer's card, verified but not yet trusted — the confirmation screen.
+    private(set) var incomingCard: IncomingCard?
     /// Received items, newest first, capped like the desktop inbox.
     private(set) var inbox: [ClipItem] = []
     /// The last successfully sent item.
@@ -84,39 +90,49 @@ final class SessionController {
     /// Last error message, shown as a banner; errors are not always fatal.
     var lastError: String?
 
-    // MARK: - Identity (configure-mode standing state)
+    // MARK: - Standing identity
 
-    /// The standing secret shared by all of this person's devices, or nil
-    /// until the setup wizard runs. Backed by the Keychain (TokenStore).
-    private(set) var secret: String? = TokenStore.load()
-    /// This device's short name, or nil until confirmed in the wizard. Kept
-    /// (as a wizard prefill) when the secret is cleared.
-    private(set) var deviceName: String? = {
-        let name = UserDefaults.standard.string(forKey: SessionController.myNameKey)
-        return (name?.isEmpty ?? true) ? nil : name
-    }()
+    /// This installation's application private key (`nsec`), or nil before
+    /// setup. Backed by the Keychain.
+    private(set) var identitySecret: String? = IdentityStore.load()
     /// This device's permanent identity suffix, minted on first launch.
     let suffix: String = SuffixStore.loadOrCreate()
+    /// The device name, self-card, trusted peer cards and channel choice.
+    private(set) var config: DuocbConfig = ConfigStore.load()
+    /// `config.peers`, parsed — the trusted-device rows.
+    private(set) var peers: [TrustedPeer] = []
 
-    // MARK: - Hub state
+    var deviceName: String? { config.myName }
+    var selfCard: String? { config.selfCard }
+    var channel: SignalChannel { config.channel }
 
-    /// The other devices sharing the secret, from the last `peer_list` event.
-    private(set) var peers: [PeerInfo] = []
-    private(set) var peersRefreshedAt: Date?
-    /// Another live process broadcasts as this device; broadcasting stopped.
-    private(set) var presenceConflict: String?
-    /// A failure of the hub instance itself (start error, peer-fetch error).
-    private(set) var hubError: String?
+    /// Everything a session needs: a key, a confirmed name, and a self-card.
+    var hasIdentity: Bool {
+        identitySecret != nil && config.myName != nil && config.selfCard != nil
+    }
 
-    /// UserDefaults key for this device's saved name.
-    static let myNameKey = "myName"
+    /// The identity other devices see, e.g. "phone_a7B2c3D4".
+    var displayIdentity: String? { config.myName.map { "\($0)_\(suffix)" } }
+
+    /// This device's key fingerprint — shown on the hub, and the value the
+    /// other device's user compares against during card setup.
+    var ownFingerprint: String? {
+        identitySecret.flatMap(Self.identityFingerprint)
+    }
+
+    /// The self-card's decoded detail, for the hub's expiry line.
+    var selfCardInfo: IdentityCardInfo? {
+        config.selfCard.flatMap(IdentityCardInfo.parse(card:))
+    }
+
+    // MARK: - Constants
 
     /// Max retained inbox items (matches desktop MAX_INBOX_ITEMS).
     private static let maxInboxItems = 5
     /// The FFI contract guarantees that every JSON event fits in 2 MiB.
     private static let maxEventBufferSize = 2 * 1024 * 1024
-    /// Hub auto-refresh cadence (desktop parity: PEER_REFRESH_INTERVAL).
-    private static let peerRefreshInterval: TimeInterval = 30
+    /// The trusted-peer cap the FFI enforces (duocb_core MAX_TRUSTED_PEERS).
+    static let maxTrustedPeers = 128
 
     private var handle: OpaquePointer?
     private var currentRole: Role?
@@ -129,71 +145,109 @@ final class SessionController {
     /// The one in-flight send (desktop parity: one outbox slot), promoted to
     /// `outbox` when the runtime confirms with `item_sent`.
     private var pendingOutbox: String?
-    /// When the last peer fetch was requested (auto-refresh throttle).
-    private var lastPeerRequestAt: Date?
-    /// Whether the device picker (JoinView) is on screen; the peer list is
-    /// only kept fresh while it is.
-    private var peerListVisible = false
-    /// The last session start, for Reconnect after a failure. `peer` carries
-    /// the target display identity (join) or the canonical PIN (quickJoin);
-    /// `channel` the quick-pair channel (nil for configure-mode roles); `ip` the
-    /// optional host IP for a LAN-only quickJoin (nil otherwise).
-    private(set) var lastSession: (role: Role, peer: String?, channel: QuickChannel?, ip: String?)?
+    /// The last session start, for Reconnect after a failure.
+    private(set) var lastSession: (role: Role, peerKey: String?, pin: String?, ip: String?)?
 
-    var isSessionActive: Bool { handle != nil && currentRole != .hub }
-    var isQuickSession: Bool { currentRole?.isQuick ?? false }
-    var hasIdentity: Bool { secret != nil && deviceName != nil }
-    /// The identity broadcast to the other devices, e.g. "phone_a7B2c3D4".
-    var displayIdentity: String? { deviceName.map { "\($0)_\(suffix)" } }
+    var isSessionActive: Bool { handle != nil }
+    /// Card setup is on screen: the PIN/dialing screen, not the clipboard one.
+    var isCardSetupActive: Bool { handle != nil && (currentRole?.isCardSetup ?? false) }
+    /// A clipboard session is on screen.
+    var isClipboardSessionActive: Bool { handle != nil && !(currentRole?.isCardSetup ?? false) }
+    var isHostingRole: Bool { currentRole?.isHost ?? false }
 
     init() {
         duocb_init_logging()
+        reloadPeers()
+        renewSelfCardIfNeeded()
     }
 
     #if DEBUG
-    /// Text queued by autostartFromEnvironment, sent once connected.
+    /// Text queued by `autostartFromEnvironment`, sent once connected.
     private var autosendText: String?
+    /// Whether to trust a card-setup card without the fingerprint screen.
+    private var autoTrustIncoming = false
 
-    /// E2E-test hook (Simulator/Debug only): set up the identity and start a
-    /// session straight from launch environment variables so a test harness
-    /// can drive pairing without UI automation. Pass via `xcrun simctl launch`
-    /// with SIMCTL_CHILD_DUOCB_AUTOSTART_{TOKEN,NAME,ROLE,PEER,PIN,IP,CHANNEL,SEND};
-    /// ROLE=join requires PEER (the target's display identity), ROLE=quick_join
-    /// requires PIN (quick roles need no TOKEN) and takes an optional IP (the
-    /// host's LAN IPv4 for a LAN-only PIN's unicast side channel), CHANNEL
-    /// selects the quick_host channel ("lan" for the LAN-only preset, default
-    /// "nostr_lan"; quick_join ignores it — the channel is read from the PIN),
-    /// and omitting ROLE lands on the hub with the identity configured (dormant
-    /// — nostr wakes only on Start/Join).
+    /// E2E-test hook, **Debug builds only** — the Release archive that ships
+    /// does not contain it. Sets up the identity and starts a session straight
+    /// from launch environment variables, so a harness can drive a pairing
+    /// without UI automation. Pass via `xcrun simctl launch` with
+    /// `SIMCTL_CHILD_DUOCB_AUTOSTART_*`:
+    ///
+    /// | variable | meaning |
+    /// | --- | --- |
+    /// | `NSEC` | this device's private key; omitted mints a fresh one |
+    /// | `NAME` | short device name, default "phone" |
+    /// | `ROLE` | `start` \| `join` \| `card_host` \| `card_join`; omit to stop at the hub |
+    /// | `PEER` | `join` only: the trusted peer's hex public key |
+    /// | `PIN` | `card_join` only |
+    /// | `IP` | `card_join` only: the host's LAN IP for the side channel |
+    /// | `CHANNEL` | `lan_then_nostr` \| `lan_only` \| `nostr_only` |
+    /// | `TRUST_INCOMING` | `1` to import a traded card without the fingerprint screen |
+    /// | `PEER_CARD` | a card to trust up front, so `start`/`join` can run unattended |
+    /// | `SEND` | text to send once connected |
+    ///
+    /// `TRUST_INCOMING` deliberately bypasses the human check that card setup
+    /// exists for. That is only acceptable because it cannot exist in a
+    /// shipping build — never lift this out of `#if DEBUG`.
     func autostartFromEnvironment() {
         let env = ProcessInfo.processInfo.environment
-        guard !isSessionActive else { return }
-        let channel = env["DUOCB_AUTOSTART_CHANNEL"]
-            .flatMap(QuickChannel.init(rawValue:)) ?? .nostrLan
-        switch env["DUOCB_AUTOSTART_ROLE"] {
-        case "quick_host":
-            autosendText = env["DUOCB_AUTOSTART_SEND"]
-            startQuickHost(channel: channel)
-            return
-        case "quick_join":
-            if let pin = env["DUOCB_AUTOSTART_PIN"].flatMap(Self.normalizePIN) {
-                autosendText = env["DUOCB_AUTOSTART_SEND"]
-                joinQuick(pin: pin, ip: env["DUOCB_AUTOSTART_IP"])
-            }
-            return
-        default:
-            break
-        }
-        guard let token = env["DUOCB_AUTOSTART_TOKEN"] else { return }
+        // ROLE alone is enough to arm the hook; without it this is an ordinary
+        // launch. A run that supplies no key gets a fresh one, so a test starts
+        // from a clean device rather than inheriting the last run's trust.
+        // Logged unconditionally: a harness that sees nothing here knows the
+        // variables never arrived (a missing SIMCTL_CHILD_ prefix, say) rather
+        // than having to guess between that and a pairing that failed silently.
+        let role = env["DUOCB_AUTOSTART_ROLE"]
+        NSLog("[duocb] autostart: role=%@ active=%@",
+              role ?? "(none)", isSessionActive ? "yes" : "no")
+        guard !isSessionActive, role != nil else { return }
+
         autosendText = env["DUOCB_AUTOSTART_SEND"]
-        setSecret(token)
-        saveName(env["DUOCB_AUTOSTART_NAME"] ?? "phone")
+        autoTrustIncoming = env["DUOCB_AUTOSTART_TRUST_INCOMING"] == "1"
+        if let channel = env["DUOCB_AUTOSTART_CHANNEL"].flatMap(SignalChannel.init(rawValue:)) {
+            setChannel(channel)
+        }
+
+        // Idempotent across relaunches, which any multi-step test needs:
+        // `setIdentity` deliberately clears the self-card and the whole trusted
+        // list, so re-applying the key this device already has would throw away
+        // the pairing the previous step just established. Only adopt a key that
+        // is genuinely new.
+        let provided = env["DUOCB_AUTOSTART_NSEC"]
+        if let provided, provided != identitySecret {
+            guard setIdentity(provided) else {
+                NSLog("[duocb] autostart: could not persist the identity — Keychain write failed")
+                return
+            }
+        } else if identitySecret == nil {
+            guard setIdentity(Self.generateIdentity()) else {
+                NSLog("[duocb] autostart: could not persist the identity — Keychain write failed")
+                return
+            }
+        }
+        let name = env["DUOCB_AUTOSTART_NAME"] ?? "phone"
+        if config.myName != name || config.selfCard == nil {
+            saveName(name)
+        }
+        if let card = env["DUOCB_AUTOSTART_PEER_CARD"] {
+            _ = importPeerCard(card)
+        }
+        NSLog("[duocb] autostart: %@ ready, %d trusted, starting role=%@",
+              displayIdentity ?? "?", peers.count, role ?? "")
+
         switch env["DUOCB_AUTOSTART_ROLE"] {
         case "start":
             startHosting()
         case "join":
-            if let peer = env["DUOCB_AUTOSTART_PEER"] {
-                join(peerDisplay: peer)
+            if let key = env["DUOCB_AUTOSTART_PEER"],
+               let peer = peers.first(where: { $0.id == key }) {
+                join(peer: peer)
+            }
+        case "card_host":
+            startCardHost()
+        case "card_join":
+            if let pin = env["DUOCB_AUTOSTART_PIN"].flatMap(Self.normalizePIN) {
+                joinCardSetup(pin: pin, ip: env["DUOCB_AUTOSTART_IP"])
             }
         default:
             break
@@ -201,61 +255,126 @@ final class SessionController {
     }
     #endif
 
-    // MARK: - Token and identity helpers (thin wrappers over the FFI)
+    // MARK: - Pure FFI helpers
+    //
+    // None of these touch the network or storage, so views may call them
+    // freely for live validation.
 
-    nonisolated static func generateToken() -> String {
-        var buf = [CChar](repeating: 0, count: 64)
-        guard duocb_generate_token(&buf, buf.count) == 1 else { return "" }
+    nonisolated static func generateIdentity() -> String {
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.identity)
+        guard duocb_generate_identity(&buf, buf.count) == 1 else { return "" }
         return String(cString: buf)
     }
 
     /// nil if valid, else the reason.
-    nonisolated static func validateToken(_ token: String) -> String? {
-        var err = [CChar](repeating: 0, count: 256)
-        let rc = token.withCString { duocb_validate_token($0, &err, err.count) }
+    nonisolated static func validateIdentity(_ nsec: String) -> String? {
+        var err = [CChar](repeating: 0, count: DuocbBuffer.error)
+        let rc = nsec.withCString { duocb_validate_identity($0, &err, err.count) }
         switch rc {
         case 1: return nil
         case 0: return String(cString: err)
-        default: return "invalid token"
+        default: return "invalid private key"
         }
     }
 
-    nonisolated static func tokenFingerprint(_ token: String) -> String? {
-        var buf = [CChar](repeating: 0, count: 64)
-        let rc = token.withCString { duocb_token_fingerprint($0, &buf, buf.count) }
+    nonisolated static func identityPublicKey(_ nsec: String) -> String? {
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.publicKey)
+        let rc = nsec.withCString { duocb_identity_public_key($0, &buf, buf.count) }
         return rc == 1 ? String(cString: buf) : nil
     }
 
-    /// Asterisks plus the secret's last four characters — never the whole
-    /// value, but enough of a hint to spot-check that a paste into a place
-    /// without fingerprint support took the right one (desktop parity).
-    nonisolated static func maskedSecretHint(_ secret: String) -> String {
-        "********" + secret.suffix(4)
+    nonisolated static func identityFingerprint(_ nsec: String) -> String? {
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.fingerprint)
+        let rc = nsec.withCString { duocb_identity_fingerprint($0, &buf, buf.count) }
+        return rc == 1 ? String(cString: buf) : nil
     }
 
-    /// Canonical form (8 uppercase Crockford chars) of a user-typed quick-pair
-    /// PIN, or nil while it isn't a valid PIN yet. Dashes/spaces/lowercase and
-    /// the I/L→1, O→0 aliases are handled by the Rust core, which also checks
-    /// the trailing check digit.
+    /// nil if valid, else the reason (the Rust core's identity::validate_name).
+    nonisolated static func validateName(_ name: String) -> String? {
+        var err = [CChar](repeating: 0, count: DuocbBuffer.error)
+        let rc = name.withCString { duocb_validate_name($0, &err, err.count) }
+        switch rc {
+        case 1: return nil
+        case 0: return String(cString: err)
+        default: return "enter a name"
+        }
+    }
+
+    /// "<name>_<suffix>", for the name field's live preview.
+    nonisolated static func displayIdentity(name: String, suffix: String) -> String {
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.name + DuocbBuffer.suffix)
+        let rc = name.withCString { namePtr in
+            suffix.withCString { suffixPtr in
+                duocb_display_identity(namePtr, suffixPtr, &buf, buf.count)
+            }
+        }
+        return rc == 1 ? String(cString: buf) : "\(name)_\(suffix)"
+    }
+
+    nonisolated static func createIdentityCard(
+        nsec: String,
+        name: String,
+        suffix: String
+    ) -> String? {
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.card)
+        let rc = nsec.withCString { keyPtr in
+            name.withCString { namePtr in
+                suffix.withCString { suffixPtr in
+                    duocb_create_identity_card(keyPtr, namePtr, suffixPtr, &buf, buf.count)
+                }
+            }
+        }
+        return rc == 1 ? String(cString: buf) : nil
+    }
+
+    /// nil if the card is well formed and correctly signed, else the reason.
+    /// Deliberately says nothing about expiry — that is a separate question the
+    /// import preview asks of `IdentityCardInfo.expired`.
+    nonisolated static func validateIdentityCard(_ card: String) -> String? {
+        var err = [CChar](repeating: 0, count: DuocbBuffer.error)
+        let rc = card.withCString { duocb_validate_identity_card($0, &err, err.count) }
+        switch rc {
+        case 1: return nil
+        case 0: return String(cString: err)
+        default: return "invalid identity card"
+        }
+    }
+
+    /// Canonical form (8 uppercase Crockford chars) of a typed card-setup PIN,
+    /// or nil while it isn't valid yet. Dashes/spaces/lowercase and the I/L→1,
+    /// O→0 aliases are handled by the Rust core, which also checks the trailing
+    /// check digit.
     nonisolated static func normalizePIN(_ input: String) -> String? {
-        var buf = [CChar](repeating: 0, count: 16)
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.pin)
         let rc = input.withCString { duocb_normalize_pin($0, &buf, buf.count) }
         return rc == 1 ? String(cString: buf) : nil
     }
 
-    /// Whether a typed PIN is LAN-only (its first character encodes the channel),
-    /// so the join screen can reveal the optional host-IP field. Any user-typed
-    /// form is accepted; a non-LAN-only or invalid PIN returns false.
-    nonisolated static func pinIsLanOnly(_ input: String) -> Bool {
-        input.withCString { duocb_pin_is_lan_only($0) == 1 }
+    /// Drop characters a PIN cannot contain, uppercasing and mapping the I/L→1
+    /// and O→0 aliases — every keystroke goes through this, so the field can
+    /// never hold a character the code does not use.
+    nonisolated static func sanitizePIN(_ input: String) -> String {
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.pin)
+        let rc = input.withCString { duocb_sanitize_pin_chars($0, &buf, buf.count) }
+        return rc == 1 ? String(cString: buf) : ""
     }
 
-    /// How the LAN-only host-IP entry should be constrained to this device's own
-    /// subnet (see `duocb_join_ip_context`). `prefix` is the locked network part
-    /// the user types after (empty when no subnet was detected → free entry),
-    /// `placeholder` describes the editable tail for the field's placeholder,
-    /// `hint` a range hint for a partial-octet subnet, `label` the CIDR for the
-    /// out-of-range message.
+    /// How many PIN characters are entered and how many a full PIN needs, for
+    /// the "keep typing" hint.
+    nonisolated static func pinProgress(_ input: String) -> (entered: Int, total: Int) {
+        var buf = [CChar](repeating: 0, count: 128)
+        guard input.withCString({ duocb_pin_progress($0, &buf, buf.count) }) == 1,
+              let data = String(cString: buf).data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return (0, 8) }
+        return (obj["entered"] as? Int ?? 0, obj["total"] as? Int ?? 8)
+    }
+
+    /// How the host-IP entry is constrained to this device's own subnet (see
+    /// `duocb_join_ip_context`). `prefix` is the locked network part the user
+    /// types after (empty when no subnet was detected → free entry),
+    /// `placeholder` describes the editable tail, `hint` a range hint for a
+    /// partial-octet subnet, `label` the CIDR for the out-of-range message.
     struct JoinIPContext {
         var prefix: String
         var placeholder: String
@@ -265,7 +384,7 @@ final class SessionController {
     }
 
     nonisolated static func joinIPContext() -> JoinIPContext {
-        var buf = [CChar](repeating: 0, count: 256)
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.joinIP)
         guard duocb_join_ip_context(&buf, buf.count) == 1,
               let data = String(cString: buf).data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -278,9 +397,9 @@ final class SessionController {
         )
     }
 
-    /// The outcome of validating the host-IP entry against this device's subnet
-    /// (see `duocb_resolve_join_ip`). `.inRange` carries the full dotted-quad to
-    /// pass to `joinQuick(ip:)`; `.empty` means resolve via mDNS (pass no IP).
+    /// The outcome of validating the host-IP entry against this device's subnet.
+    /// `.inRange` carries the full dotted-quad to pass to `joinCardSetup(ip:)`;
+    /// `.empty` means browse DNS-SD instead (pass no IP).
     enum JoinIPOutcome: Equatable {
         case empty
         case inRange(String)
@@ -299,183 +418,227 @@ final class SessionController {
         }
     }
 
-    /// nil if valid, else the reason (mirrors duocb-core identity::validate_name).
-    nonisolated static func validateName(_ name: String) -> String? {
-        if name.isEmpty {
-            return "enter a name"
-        }
-        if name.count > 24 {
-            return "keep the name to 24 characters or fewer"
-        }
-        if !name.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }) {
-            return "letters, digits, and '-' only"
-        }
-        return nil
-    }
-
     // MARK: - Identity mutation (wizard commit points)
 
-    /// Persist a newly generated or imported secret to the Keychain and, only
-    /// if that write succeeds, adopt it in memory. Saved immediately, like the
-    /// desktop wizard. Returns whether the secret is now stored, so the caller
-    /// advances setup only when it truly reached secure storage (and never on
-    /// an empty/failed-to-generate token).
+    /// Adopt a newly generated or imported private key, persisting it to the
+    /// Keychain first and only adopting it in memory if that write succeeds —
+    /// so setup never advances on a secret that did not reach secure storage.
+    ///
+    /// A key change invalidates everything keyed to the old one: the self-card
+    /// was signed by it, and the trusted peers hold *its* public key, not the
+    /// new one. Both are cleared, exactly as the desktop's reset does.
     @discardableResult
-    func setSecret(_ token: String) -> Bool {
-        guard TokenStore.save(token) else { return false }
-        secret = token
+    func setIdentity(_ nsec: String) -> Bool {
+        guard IdentityStore.save(nsec) else { return false }
+        identitySecret = nsec
+        config.selfCard = nil
+        config.peers = []
+        reloadPeers()
+        // Keep the name as a prefill, but re-mint the card under the new key if
+        // one was already confirmed.
+        if let name = config.myName {
+            config.selfCard = Self.createIdentityCard(nsec: nsec, name: name, suffix: suffix)
+        }
+        persist()
         return true
     }
 
-    /// Persist the confirmed device name. If the hub is broadcasting, restart
-    /// it so the presence record carries the new name.
+    /// Persist the confirmed device name and mint the self-card that names it.
+    /// The card is the thing other devices store, so a rename means a new card
+    /// — and peers keep trusting the old one until its owner hands over the new
+    /// one, which is why the name is not a live-updating field.
     func saveName(_ name: String) {
-        UserDefaults.standard.set(name, forKey: Self.myNameKey)
-        deviceName = name
-        if currentRole == .hub {
-            teardown { [weak self] in self?.startHub() }
-        }
+        guard let nsec = identitySecret else { return }
+        config.myName = name
+        config.selfCard = Self.createIdentityCard(nsec: nsec, name: name, suffix: suffix)
+        persist()
     }
 
-    /// Clear the standing secret (an explicit, confirmed action). The suffix
-    /// is permanent and the name is kept as a prefill for the next setup.
-    func clearSecret() {
+    /// Start over with a fresh application identity: a new keypair, no name, no
+    /// self-card, and an empty trusted list — every peer's stored copy of the
+    /// old key is now meaningless. The permanent suffix survives (desktop
+    /// parity: `reset_identity` never touches `device_suffix`).
+    func resetIdentity() {
         teardown {}
-        TokenStore.clear()
-        secret = nil
+        IdentityStore.clear()
+        identitySecret = nil
+        config = .empty
         peers = []
-        peersRefreshedAt = nil
-        lastPeerRequestAt = nil
-        presenceConflict = nil
-        hubError = nil
         lastSession = nil
+        incomingCard = nil
+        ConfigStore.save(config)
     }
 
-    // MARK: - Hub lifecycle
-
-    /// Run the hub instance (presence broadcast + peer list) while the device
-    /// picker is open — this is where nostr wakes for a join. No-op when any
-    /// instance is already running or an old one is still shutting down (its
-    /// teardown completion restarts us).
-    func startHub() {
-        guard handle == nil, !stopping, hasIdentity else { return }
-        presenceConflict = nil
-        hubError = nil
-        guard startRuntime(role: .hub, peer: nil) else { return }
-        // The FFI issues the initial peer fetch itself.
-        lastPeerRequestAt = .now
+    func setChannel(_ channel: SignalChannel) {
+        guard config.channel != channel else { return }
+        config.channel = channel
+        persist()
     }
 
-    /// Stop the hub instance, putting nostr back to sleep. Called when the user
-    /// leaves the device picker back to the plain hub, so the home screen holds
-    /// no relay connections. No-op unless the hub is the running instance.
-    func stopHub() {
-        guard currentRole == .hub else { return }
-        peers = []
-        peersRefreshedAt = nil
-        lastPeerRequestAt = nil
-        presenceConflict = nil
-        hubError = nil
+    // MARK: - Trusted peers
+
+    /// Import a card pasted from another device. Returns nil on success, else
+    /// the reason — the same failures the desktop's paste-import reports.
+    @discardableResult
+    func importPeerCard(_ pasted: String) -> String? {
+        let trimmed = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "paste the card copied from the other device" }
+        if let error = Self.validateIdentityCard(trimmed) { return error }
+        guard let peer = TrustedPeer(card: trimmed) else { return "invalid identity card" }
+        if let nsec = identitySecret,
+           let ownKey = Self.identityPublicKey(nsec),
+           peer.info.npub == ownKey {
+            return "that is this device's own card"
+        }
+        return store(peer)
+    }
+
+    /// Trust the card card setup handed over, after the user confirmed its
+    /// fingerprint against the other device. This is the only path that turns a
+    /// verified card into a trusted one.
+    func importIncomingCard() {
+        guard let incoming = incomingCard, let peer = TrustedPeer(card: incoming.card) else {
+            dismissIncomingCard()
+            return
+        }
+        if let error = store(peer) {
+            lastError = error
+        }
+        dismissIncomingCard()
+    }
+
+    /// Decline the card and end card setup without trusting anything.
+    func dismissIncomingCard() {
+        incomingCard = nil
+        phase = .idle
         teardown {}
     }
 
-    /// Re-fetch the device list; the result arrives as a `peer_list` event.
-    func refreshPeers() {
-        guard let handle else { return }
-        lastPeerRequestAt = .now
-        _ = duocb_refresh_peers(handle)
+    func removePeer(publicKey: String) {
+        guard let peer = peers.first(where: { $0.id == publicKey }) else { return }
+        config.peers.removeAll { $0 == peer.card }
+        reloadPeers()
+        persist()
     }
 
-    /// Track whether the device picker is on screen. Entering it refreshes
-    /// the list right away (unless a fetch just went out); leaving it stops
-    /// the 30 s auto-refresh.
-    func setPeerListVisible(_ visible: Bool) {
-        peerListVisible = visible
-        if visible, currentRole == .hub,
-           Date.now.timeIntervalSince(lastPeerRequestAt ?? .distantPast) > 5 {
-            refreshPeers()
+    /// Add or replace a peer, keyed on public key: a re-traded card from the
+    /// same device is a *renewal*, so it replaces the stored copy rather than
+    /// appearing twice. Returns nil on success, else the reason.
+    private func store(_ peer: TrustedPeer) -> String? {
+        if let existing = peers.first(where: { $0.id == peer.id }) {
+            config.peers.removeAll { $0 == existing.card }
+        } else if peers.count >= Self.maxTrustedPeers {
+            return "this device already trusts the maximum of \(Self.maxTrustedPeers) devices"
+        }
+        config.peers.append(peer.card)
+        reloadPeers()
+        persist()
+        return nil
+    }
+
+    private func reloadPeers() {
+        peers = config.peers.compactMap(TrustedPeer.init(card:))
+            .sorted { $0.info.name.localizedCaseInsensitiveCompare($1.info.name) == .orderedAscending }
+    }
+
+    private func persist() {
+        if !ConfigStore.save(config) {
+            lastError = "Could not save this device's settings"
         }
     }
 
-    /// Recover from a hub failure: restart the hub if it died, otherwise just
-    /// retry the peer fetch.
-    func retryHub() {
-        hubError = nil
-        if handle == nil {
-            startHub()
-        } else {
-            refreshPeers()
+    /// Re-mint the self-card once it is inside its renewal window, so the card
+    /// the user copies always has most of its life ahead of it. Called at
+    /// launch; a card with under a week left is replaced in place.
+    private func renewSelfCardIfNeeded() {
+        guard let nsec = identitySecret, let name = config.myName else { return }
+        // No card, an unparseable one, or one near expiry all want a fresh mint.
+        let info = config.selfCard.flatMap(IdentityCardInfo.parse(card:))
+        guard info == nil || info!.needsRenewal else { return }
+        guard let card = Self.createIdentityCard(nsec: nsec, name: name, suffix: suffix) else {
+            return
         }
+        config.selfCard = card
+        persist()
     }
 
     // MARK: - Session lifecycle
 
-    /// Host a connection; the other device joins by picking this one from its
-    /// list.
+    /// Host a clipboard session; a trusted device joins by picking this one.
     func startHosting() {
-        startSession(role: .start, peer: nil)
+        startSession(role: .start, peerKey: nil)
     }
 
-    /// Join the hosting device picked from the peer list.
-    func join(peerDisplay: String) {
-        startSession(role: .join, peer: peerDisplay)
+    /// Dial one trusted peer.
+    func join(peer: TrustedPeer) {
+        joinedPeer = peer.info.name
+        startSession(role: .join, peerKey: peer.id)
     }
 
-    /// Quick pair: host a session under a rotating PIN shown on this device.
-    func startQuickHost(channel: QuickChannel = .nostrLan) {
-        startSession(role: .quickHost, peer: nil, channel: channel)
+    /// Card setup: show a rotating PIN on this device and trade cards.
+    func startCardHost() {
+        startSession(role: .cardHost, peerKey: nil)
     }
 
-    /// Quick pair: dial the PIN shown on the other device. `canonical` comes
-    /// from `normalizePIN` (the FFI re-checks it anyway). No channel argument —
-    /// the FFI reads the rendezvous channel from the PIN's first character. `ip`
-    /// is the optional host IP for a LAN-only PIN (the unicast side channel);
-    /// nil/blank resolves via mDNS.
-    func joinQuick(pin canonical: String, ip: String? = nil) {
+    /// Card setup: dial the PIN shown on the other device. `canonical` comes
+    /// from `normalizePIN` (the FFI re-checks it anyway). `ip` is the optional
+    /// host IP for the unicast side channel where multicast is blocked; nil
+    /// browses DNS-SD.
+    func joinCardSetup(pin canonical: String, ip: String? = nil) {
         let ip = ip?.trimmingCharacters(in: .whitespaces)
-        startSession(role: .quickJoin, peer: canonical, ip: ip?.isEmpty == false ? ip : nil)
+        startSession(
+            role: .cardJoin,
+            peerKey: nil,
+            pin: canonical,
+            ip: ip?.isEmpty == false ? ip : nil
+        )
     }
 
     private func startSession(
         role: Role,
-        peer: String?,
-        channel: QuickChannel? = nil,
+        peerKey: String?,
+        pin: String? = nil,
         ip: String? = nil
     ) {
         guard !stopping else { return } // a transition is already in flight
         lastError = nil
-        lastSession = (role, peer, channel, ip)
-        // Instant feedback; the runtime's own status events take over once the
-        // old instance (hub or previous session) has wound down off-thread.
+        incomingCard = nil
+        lastSession = (role, peerKey, pin, ip)
+        // Instant feedback; the runtime's own status events take over once any
+        // previous session has wound down off-thread.
         phase = .starting
-        teardown { [weak self] in
+        teardown(clearJoinedPeer: false) { [weak self] in
             guard let self else { return }
-            _ = self.startRuntime(role: role, peer: peer, channel: channel, ip: ip)
+            _ = self.startRuntime(role: role, peerKey: peerKey, pin: pin, ip: ip)
         }
     }
 
-    /// Resume the session after a failure. A parked session (it ended on its
-    /// own but the runtime was kept alive — see `fail`) resumes on the same
-    /// runtime via duocb_reconnect, which reuses the session identity: the
-    /// same node id dials the same pinned target, so the already-paired peer
-    /// accepts it without re-pairing or a fresh PIN. Only when no runtime is
-    /// left (it died, or starting never succeeded) does this fall back to a
-    /// full restart with a fresh identity.
+    /// Resume after a failure. A parked session (it ended on its own but the
+    /// runtime was kept alive — see `fail`) resumes on the same runtime via
+    /// `duocb_reconnect`, which reuses the session identity: the same node id
+    /// dials the same pinned target, so an already-paired peer accepts it
+    /// without re-pairing or a fresh PIN. Only when no runtime is left does
+    /// this fall back to a full restart with a fresh identity.
     func reconnect() {
-        if let handle, currentRole != .hub, !stopping, duocb_reconnect(handle) == 0 {
+        if let handle, !stopping, duocb_reconnect(handle) == 0 {
             lastError = nil
             phase = .starting
             return
         }
-        guard let s = lastSession else { return }
-        startSession(role: s.role, peer: s.peer, channel: s.channel, ip: s.ip)
+        guard let session = lastSession else { return }
+        startSession(
+            role: session.role,
+            peerKey: session.peerKey,
+            pin: session.pin,
+            ip: session.ip
+        )
     }
 
-    /// Stop the session and return to the hub, now dormant: nostr stays off
-    /// until the user picks Start or Join again.
+    /// Stop the session and return to the hub.
     func stop() {
         phase = .idle
         lastError = nil
+        incomingCard = nil
         teardown {}
     }
 
@@ -494,55 +657,62 @@ final class SessionController {
         checkRuntimeAlive()
     }
 
-    /// Start a runtime instance — with the stored identity for configure-mode
-    /// roles, identity-less for quick roles. Returns false (and records the
-    /// failure) when it could not start.
+    /// Build the role's config and start a runtime instance. Returns false (and
+    /// records the failure) when it could not start.
     private func startRuntime(
         role: Role,
-        peer: String?,
-        channel: QuickChannel? = nil,
-        ip: String? = nil
+        peerKey: String?,
+        pin: String?,
+        ip: String?
     ) -> Bool {
-        var config: [String: Any] = ["role": role.rawValue]
-        if role.isQuick {
-            if role == .quickJoin {
-                // No channel on join — the FFI infers it from the PIN. An
-                // optional IP selects the unicast side channel (LAN-only PIN).
-                config["pin"] = peer
-                if let ip, !ip.isEmpty {
-                    config["ip"] = ip
+        guard let selfCard = config.selfCard else {
+            phase = .failed("Set up this device's identity first")
+            return false
+        }
+        var configJSON: [String: Any] = [
+            "role": role.rawValue,
+            "self_card": selfCard,
+            "channel": config.channel.rawValue,
+        ]
+        if role.isCardSetup {
+            // Card setup is identity-less on the wire: the private key and the
+            // trusted list have no part in it, and the FFI rejects them outright
+            // rather than ignoring them.
+            if role == .cardJoin {
+                configJSON["pin"] = pin
+                // Only meaningful on a channel that uses the local network; the
+                // FFI refuses the combination rather than dropping it silently.
+                if let ip, !ip.isEmpty, config.channel.usesLAN {
+                    configJSON["ip"] = ip
                 }
-            } else {
-                config["channel"] = (channel ?? .nostrLan).rawValue
             }
         } else {
-            guard let secret, let deviceName else {
-                record(failure: "Set up the secret and device name first", for: role)
+            guard let identitySecret else {
+                phase = .failed("Set up this device's identity first")
                 return false
             }
-            config["token"] = secret
-            config["name"] = deviceName
-            config["suffix"] = suffix
-            if let peer {
-                config["peer"] = peer
+            configJSON["identity_secret"] = identitySecret
+            configJSON["peers"] = peers.map(\.card)
+            if let peerKey {
+                configJSON["peer_public_key"] = peerKey
             }
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: config),
+
+        guard let data = try? JSONSerialization.data(withJSONObject: configJSON),
               let json = String(data: data, encoding: .utf8)
         else {
-            record(failure: "could not encode config", for: role)
+            phase = .failed("could not encode config")
             return false
         }
 
-        var err = [CChar](repeating: 0, count: 1024)
+        var err = [CChar](repeating: 0, count: DuocbBuffer.error)
         let started = json.withCString { duocb_start($0, &err, err.count) }
         guard let started else {
-            record(failure: String(cString: err), for: role)
+            phase = .failed(String(cString: err))
             return false
         }
         handle = started
         currentRole = role
-        joinedPeer = role == .join ? peer : nil
 
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -550,31 +720,24 @@ final class SessionController {
         return true
     }
 
-    private func record(failure: String, for role: Role) {
-        if role == .hub {
-            hubError = failure
-        } else {
-            phase = .failed(failure)
-        }
-    }
-
     /// Release the current instance and run `next` once it has actually shut
-    /// down. duocb_stop performs a graceful runtime shutdown — normally fast,
+    /// down. `duocb_stop` performs a graceful runtime shutdown — normally fast,
     /// but up to a few seconds with a live session — so it runs off the main
-    /// thread; blocking here was what made Start/Join/Stop feel frozen.
-    private func teardown(then next: @escaping () -> Void) {
+    /// thread; blocking here is what would make Start/Join/Stop feel frozen.
+    private func teardown(clearJoinedPeer: Bool = true, then next: @escaping () -> Void) {
         pollTimer?.invalidate()
         pollTimer = nil
         currentRole = nil
         nodeID = nil
-        tokenFingerprint = nil
         peerNodeID = nil
-        joinedPeer = nil
         pinDisplay = nil
         pinDeadline = nil
         hostLanIP = nil
         connPaths = nil
         pendingOutbox = nil
+        if clearJoinedPeer {
+            joinedPeer = nil
+        }
         guard let handle else {
             next()
             return
@@ -591,30 +754,19 @@ final class SessionController {
         }
     }
 
-    /// Surface a session/hub failure. A failed hub restarts to keep browsing
-    /// alive. A failed session whose runtime is still alive is *parked*, not
-    /// stopped: the runtime holds the session identity and pairing state
-    /// (node id, pair claim, pinned dial target) for as long as it runs, so
-    /// keeping it lets Reconnect resume the same pairing (`duocb_reconnect`)
-    /// where a stop + fresh start would mint a new identity the already-paired
-    /// peer refuses. Stop, or starting anything else, still discards it. Only
-    /// a runtime that actually died is torn down here.
+    /// Surface a session failure. A failed session whose runtime is still alive
+    /// is *parked*, not stopped: the runtime holds the session identity and
+    /// pairing state (node id, pair claim, pinned dial target) for as long as it
+    /// runs, so keeping it lets Reconnect resume the same pairing where a stop
+    /// plus fresh start would mint a new identity the already-paired peer
+    /// refuses. Stop, or starting anything else, still discards it. Only a
+    /// runtime that actually died is torn down here.
     private func fail(_ message: String) {
-        if currentRole == .hub {
-            // The hub only runs while the picker is open, so restart it to keep
-            // browsing alive.
-            hubError = message
-            teardown { [weak self] in self?.startHub() }
-        } else if let handle, duocb_is_running(handle) == 1 {
-            // Parked: the session ended (e.g. the reconnect give-up) but the
-            // runtime lives on with the pairing memory. The session screen
-            // stays up, showing the failure with Reconnect and Stop.
+        if let handle, duocb_is_running(handle) == 1 {
             phase = .failed(message)
         } else {
-            // The runtime itself died: drop to the dormant hub with the
-            // failure shown; Reconnect there does a full fresh start.
             phase = .failed(message)
-            teardown {}
+            teardown(clearJoinedPeer: false) {}
         }
     }
 
@@ -642,12 +794,15 @@ final class SessionController {
         _ = duocb_query_conn_path(handle)
     }
 
-    /// Quick host: mint and publish a fresh PIN immediately, invalidating
-    /// every previously shown PIN. The replacement arrives as the next
-    /// `pin_rotated` event.
+    /// Card host: mint and publish a fresh PIN immediately, invalidating every
+    /// previously shown one. The replacement arrives as the next `pin_rotated`.
     func refreshPIN() {
         guard let handle else { return }
         _ = duocb_refresh_pin(handle)
+    }
+
+    func clearInbox() {
+        inbox = []
     }
 
     func togglePeek(_ id: ClipItem.ID) {
@@ -660,21 +815,20 @@ final class SessionController {
     private func tick() {
         drainEvents()
         tickPeeks()
-        autoRefreshPeers()
-    }
-
-    /// While the device picker is on screen, keep the list fresh (desktop
-    /// parity: refresh every 30 s while visible).
-    private func autoRefreshPeers() {
-        guard currentRole == .hub, handle != nil, peerListVisible,
-              Date.now.timeIntervalSince(lastPeerRequestAt ?? .distantPast) > Self.peerRefreshInterval
-        else { return }
-        refreshPeers()
     }
 
     private func drainEvents() {
         guard let handle else { return }
         while true {
+            // Re-checked every iteration, and it must be: `apply` below can tear
+            // the session down from inside this loop — a card-setup card
+            // imported, or a fatal `idle` reaching `fail` — and `teardown`
+            // clears `self.handle` and hands the pointer to `duocb_stop` on a
+            // background queue. Reading from the captured `handle` after that is
+            // a use-after-free, and it segfaults inside `duocb_next_event`
+            // rather than failing gracefully. Comparing identity (not just
+            // non-nil) also catches a handler that started a *new* session.
+            guard self.handle == handle else { return }
             let rc = eventBuffer.withUnsafeMutableBufferPointer {
                 duocb_next_event(handle, $0.baseAddress, $0.count)
             }
@@ -711,11 +865,8 @@ final class SessionController {
         switch type {
         case "server_ready", "client_ready":
             nodeID = object["node_id"] as? String
-            tokenFingerprint = object["token_fingerprint"] as? String
 
         case "status":
-            // The hub never runs a session; ignore stray status chatter there.
-            guard currentRole != .hub else { break }
             switch object["state"] as? String {
             case "starting": phase = .starting
             case "listening": phase = .listening
@@ -735,17 +886,22 @@ final class SessionController {
                     attempt: object["attempt"] as? Int ?? 0,
                     max: object["max"] as? Int ?? 0)
             case "idle":
-                // The runtime only goes idle on its own when the session died
-                // (fatal auth failure, client gave up). The preceding error
-                // event carries the reason.
-                fail(lastError ?? "Session ended")
+                // Card setup goes idle the moment the cards have crossed, which
+                // is success, not failure — the confirmation screen is already
+                // up (peer_card_received is guaranteed to arrive first). Any
+                // other idle means the session died; the preceding error event
+                // carries the reason.
+                if incomingCard != nil {
+                    phase = .idle
+                } else {
+                    fail(lastError ?? "Session ended")
+                }
             default: break
             }
 
         case "pin_rotated":
             pinDisplay = object["pin_display"] as? String
             pinDeadline = .now.addingTimeInterval(object["seconds_left"] as? Double ?? 60)
-            // LAN-only channel only; null (→ nil) on others.
             hostLanIP = object["host_lan_ip"] as? String
 
         case "pin_cleared":
@@ -756,6 +912,26 @@ final class SessionController {
         case "peer_paired":
             peerNodeID = object["peer_node_id"] as? String
             lastError = nil
+
+        case "peer_card_received":
+            // Verified as well formed and correctly signed — and nothing more.
+            // Parking it here rather than storing it is the whole point: the
+            // PIN is short, so only the user's fingerprint comparison can tell
+            // this card from an interposer's.
+            if let card = object["card"] as? String,
+               let infoObject = object["info"] as? [String: Any],
+               let info = IdentityCardInfo.decode(object: infoObject) {
+                incomingCard = IncomingCard(card: card, info: info)
+                #if DEBUG
+                // E2E only: skip the screen whose entire job is the human
+                // fingerprint check. Impossible in a shipping build.
+                if autoTrustIncoming {
+                    importIncomingCard()
+                }
+                #endif
+            } else {
+                lastError = "The other device sent a card that could not be read"
+            }
 
         case "peer_disconnected":
             peerNodeID = nil
@@ -789,21 +965,9 @@ final class SessionController {
             }
             pendingOutbox = nil
 
-        case "peer_list":
-            peers = PeerInfo.parse(object["peers"])
-            peersRefreshedAt = .now
-            hubError = nil
-
-        case "presence_conflict":
-            presenceConflict = object["message"] as? String
-
         case "error":
             pendingOutbox = nil
-            if currentRole == .hub {
-                hubError = object["message"] as? String
-            } else {
-                lastError = object["message"] as? String
-            }
+            lastError = object["message"] as? String
 
         default:
             break

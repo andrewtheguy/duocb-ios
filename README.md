@@ -3,42 +3,43 @@
 iOS peer of [duocb](https://github.com/andrewtheguy/duocb) — P2P clipboard-text
 sharing between two devices you own, over iroh QUIC with nostr-relay discovery.
 
-This app supports **configure mode**: all of your devices share one
-standing 47-char secret, set up once through a wizard (generate it on the
-first device, import it on every other; compare the fingerprint to confirm
-they match). Each device broadcasts a presence record under a unique identity
-`<name>_<suffix>` — a short name you choose plus a permanent 8-character
-suffix minted on first launch. To pair, **Start a connection** on one device;
-on the other choose **Join another device**, which shows your device list and
-when each record was last broadcast — no online/offline or hosting guesswork:
-relay freshness is unreliable, so nothing is gated on it and the iroh dial
-itself is the liveness check. Tap any listed device to connect. If it is not
-hosting yet, the join retries every few seconds for up to 10 attempts; if those
-attempts expire, tap Join again after Start is pressed there.
+Every device holds **its own application keypair** and a signed identity card
+naming `<short-name>_<permanent-suffix>` — there is no shared secret to copy
+between devices. Two devices come to trust each other by **trading cards**: one
+shows a short rotating PIN, the other types it, and the PIN-authenticated
+connection carries the two cards across. Both screens then show the same key
+**fingerprint**, and neither card is stored until you confirm they match. That
+human check is the point — a PIN is short, so possession of it alone must never
+be enough to become a trusted device. Card setup carries no clipboard content
+and ends as soon as the cards have crossed.
 
-It also supports **quick pair**: ephemeral pairing with any duocb device —
-even one that doesn't share your secret — via a short rotating PIN, with no
-setup at all (it's offered on the first screen and on the hub). One device
-shows the PIN, the other types it; the PIN renews every 60 seconds until a
-device pairs. The host accepts only its current PIN and the PIN from the
-immediately previous rotation; anything older is rejected. A **channel** menu
-picks how the PIN is found, matching the desktop presets — choose the same
-channel on both devices:
+Once two devices trust each other, press **Start a connection** on one and
+**Join** on the other, then pick it from the trusted-device list. The join
+retries for a short while, so press Start first if it is not hosting yet.
 
-- **Internet + local network** (default; the desktop **P** preset) — the
-  rendezvous rides public nostr relays. Works across networks; the connection
-  itself still goes direct when the devices share a network.
-- **Local network only** (the desktop **L** preset) — no third-party server
-  at all: the PIN is advertised as a Bonjour service through the system's
-  mDNSResponder daemon (no multicast entitlement involved) and the joiner
-  dials the direct addresses it resolves. Both devices must be on the same
-  network. Joining triggers the Local Network permission prompt; hosting
-  needs the permission too — if iOS denies the advertisement, the app shows
-  an error and nudges the prompt, and the next PIN rotation (≤60 s) recovers
-  once you grant access (Settings > Privacy & Security > Local Network).
+Cards expire 30 days after they are minted. This device's own card renews
+itself; a peer's card that lapses can no longer pair and shows in warning
+colour until that device hands over a fresh one. You can also paste a card
+directly, which is the same trust decision with the same fingerprint check.
 
-The desktop's nostr-only PIN preset and the manual pairing code remain
-desktop-only.
+A **channel** setting picks how the two devices find each other. It governs
+card setup and clipboard sessions alike, so **both devices must be set to a
+channel they share**:
+
+- **Local network, then internet** (default) — looks on the local network
+  first and falls back to relay servers. Sub-second in the same room, and
+  still works across networks.
+- **Local network only** — no third-party server and no internet needed, but
+  both devices must be on the same network. The rendezvous is a Bonjour
+  service registered through the system's mDNSResponder daemon (no multicast
+  entitlement involved) and the dial goes straight to the addresses it
+  resolves. Triggers the Local Network permission prompt; if iOS denies the
+  advertisement, the app says so and the next PIN rotation recovers once you
+  grant access (Settings > Privacy & Security > Local Network).
+- **Internet only** — relay servers only, with no local-network lookup at all.
+
+Where multicast is blocked, the device showing a PIN also displays its local
+IP, and the joining device can type it to pair over a direct side channel.
 
 Received text lands in an in-memory inbox showing only size + CRC + time — it
 reaches the clipboard only via an explicit **Copy**, and is revealed only via
@@ -49,6 +50,12 @@ library (`libduocb.xcframework`) and driven over a small C FFI
 (`crates/duocb-ffi` + `ios/duocb.h` in the duocb repo). Everything runs
 in-process: no accounts, no Network Extension, no special entitlements — it
 also runs in the Simulator.
+
+One piece of the core is compiled out on iOS: iroh's own mDNS address lookup,
+which opens multicast sockets in-process and would need Apple's restricted
+multicast entitlement. Regular mDNS is unaffected — it goes through the system
+mDNSResponder daemon instead, which is why `Info.plist` declares both
+`_duocb-pin._udp` (card setup) and `_duocb-host._udp` (clipboard sessions).
 
 ## Requirements
 
@@ -80,13 +87,17 @@ also runs in the Simulator.
    ```
 
 3. Run on a device or Simulator. The setup wizard runs on first launch:
-   create the secret (or paste the one from your other device), name this
-   device, and the hub appears. Start a connection on one device; on the
-   other choose Join and tap it in the device list.
+   create this device's identity, name it, and the hub appears. Choose **Trade
+   cards** on both devices to pair them, then Start on one and Join on the
+   other.
 
-The secret lives in the Keychain and stays until you explicitly **Clear
-secret** on the hub. The permanent identity suffix also lives in the Keychain
-(device-only, never synced) and survives clearing the secret.
+The application private key and the permanent identity suffix live in the
+Keychain (device-only, never synced to iCloud or restored onto another device —
+an identity *is* this installation). The device name, this device's signed
+card, the trusted peers' cards and the channel choice live in a JSON file in
+Application Support; cards are public by design, so the Keychain buys them
+nothing. **Reset identity** in Settings starts over with a fresh keypair and an
+empty trusted list; the permanent suffix survives it.
 
 The xcframework is arm64-only, so pin an arm64 Simulator explicitly when
 building from the CLI:
@@ -162,17 +173,48 @@ SPM forbids binary-target paths outside the package root, so the sibling's
   and launch on a paired physical device.
 - `scripts/render-icons.swift` — regenerate the app icon set + `icon.svg`.
 
-## Same-machine end-to-end test
+## End-to-end test against the desktop app
 
 The Simulator shares the Mac's network, so you can pair it against a desktop
-duocb on the same machine. Give the desktop its own config path (only one
-process may hold a config file):
+duocb. Give the desktop its own config path (only one process may hold a
+config file):
 
 ```sh
 cd ../duocb && cargo run -p duocb -- --config /tmp/duocb-desktop.json
 ```
 
-Desktop: run the setup wizard (generate the secret, name it `mac`). Simulator
-app: import the same secret (fingerprints must match), name it `phone`. Press
-Start on the desktop, then choose Join in the app and tap the `mac_…` row;
-send text both ways and compare the CRC readouts.
+Set up both sides (desktop: generate an identity, name it `mac`; app: the same,
+named `phone`), then choose **Trade cards** on both — show the PIN on one, type
+it on the other, and confirm the fingerprint each screen displays matches the
+other device's before importing. After that press Start on the desktop, choose
+Join in the app and tap the `mac_…` row; send text both ways and compare the
+CRC readouts.
+
+`--lan-only` and `--nostr-only` pin the desktop to one channel for the life of
+the process; set the app's Settings channel to match. Forcing them differently
+— a `--nostr-only` desktop against a default app — is what exercises the relay
+fallback.
+
+## CI from a Linux checkout
+
+This repository's authoritative checkout lives on Linux, while the build needs
+Xcode. `scripts/mac-ci.sh` bridges the two: it rsyncs this working tree and the
+sibling `../duocb` to a macOS host over ssh (the `macvm` alias by default;
+override with `DUOCB_MAC_HOST`), then runs `ci/ci.sh` there and streams the
+output back.
+
+```sh
+scripts/mac-ci.sh                        # simulator, smoke, unsigned, device
+scripts/mac-ci.sh ffi                    # rebuild the Rust core for iOS and link it
+scripts/mac-ci.sh --local simulator smoke
+scripts/mac-ci.sh --sync-only            # push the trees, run nothing
+```
+
+`--local` links `../duocb`'s working-tree build instead of the release pinned
+in `Packages/Duocb/Package.swift`; it is required whenever the FFI has changed
+but no release carries that change yet.
+
+The `device` job is the one that cannot run over ssh: codesign needs a private
+key from the login keychain, which an ssh session leaves locked. `ci/ci.sh`
+detects this and prints the unlock commands, which need the account password —
+run that job from a GUI session on the Mac instead.

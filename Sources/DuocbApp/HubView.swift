@@ -1,64 +1,44 @@
 import SwiftUI
 
-/// The configured home hub: this device's identity and the two actions —
-/// **Start a connection** (host; needs nothing but this device) or **Join
-/// another device**, which opens the device picker (JoinView). The hub itself
-/// stays dormant — nostr wakes only when the user starts hosting (a `start`
-/// instance) or opens the picker (a `hub` instance broadcasts + fetches peers).
+/// The configured home hub: this device's identity and card, the actions that
+/// start a session, and the way in to card setup.
+///
+/// Unlike the old presence-based hub, **nothing runs here.** The trusted-device
+/// list is local state read from this app's own storage — there is no broadcast,
+/// no discovery, and no relay connection — so the hub holds no FFI handle at
+/// all. A runtime instance appears only when the user hosts, joins, or trades
+/// cards.
 struct HubView: View {
     @Environment(SessionController.self) private var controller
-    @Binding var step: ConfigureView.Step
-    @State private var confirmClearSecret = false
+    @Binding var step: SetupView.Step
 
     var body: some View {
         List {
-            failureSections
+            SessionFailureSection()
+            if let error = controller.lastError {
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .font(.footnote)
+                    Button("Dismiss") { controller.lastError = nil }
+                        .buttonStyle(.borderless)
+                }
+            }
             identitySection
             actionsSection
-            quickSection
-            AppVersionSection()
-        }
-        .confirmationDialog(
-            "Clear the shared secret?",
-            isPresented: $confirmClearSecret,
-            titleVisibility: .visible
-        ) {
-            Button("Clear secret", role: .destructive) {
-                controller.clearSecret()
-                step = .choice
+            cardSetupSection
+            Section {
+                Button {
+                    step = .settings
+                } label: {
+                    Label("Settings", systemImage: "gearshape")
+                }
             }
-        } message: {
-            Text("""
-                This device will stop broadcasting and can no longer pair with \
-                your other devices until a secret is set up again. The device's \
-                permanent id is kept.
-                """)
+            AppVersionSection()
         }
     }
 
     // MARK: - Sections
-
-    /// A failed session (with Reconnect) and hub trouble, when present.
-    @ViewBuilder
-    private var failureSections: some View {
-        SessionFailureSection()
-        if let hubError = controller.hubError {
-            Section {
-                Label(hubError, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .font(.footnote)
-                Button("Retry") { controller.retryHub() }
-                    .buttonStyle(.borderless)
-            }
-        }
-        if let conflict = controller.presenceConflict {
-            Section {
-                Label(conflict, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                    .font(.footnote)
-            }
-        }
-    }
 
     private var identitySection: some View {
         Section {
@@ -66,29 +46,35 @@ struct HubView: View {
                 Text(controller.displayIdentity ?? "")
                     .font(.system(.footnote, design: .monospaced))
             }
-            if let secret = controller.secret {
-                LabeledContent("Secret") {
-                    Text(SessionController.maskedSecretHint(secret))
-                        .font(.system(.footnote, design: .monospaced))
+            if let fingerprint = controller.ownFingerprint {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Fingerprint")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    FingerprintText(fingerprint: fingerprint)
                 }
-                if let fingerprint = SessionController.tokenFingerprint(secret) {
-                    LabeledContent("Fingerprint") {
-                        Text(fingerprint)
-                            .font(.system(.footnote, design: .monospaced))
-                    }
-                }
-                CopySecretButton(secret: secret)
             }
+            if let info = controller.selfCardInfo {
+                LabeledContent("Card") {
+                    Text(info.expiryText)
+                        .font(.footnote)
+                        .foregroundStyle(info.expired ? .orange : .secondary)
+                }
+            }
+            if let card = controller.selfCard {
+                CopyButton(value: card, title: "Copy this device's card")
+            }
+            ChannelBadge(channel: controller.channel)
             Button("Rename this device") { step = .name }
-                .buttonStyle(.borderless)
-            Button("Clear secret…", role: .destructive) { confirmClearSecret = true }
                 .buttonStyle(.borderless)
         } header: {
             Text("This device")
         } footer: {
             Text("""
-                The fingerprint must match on every device. Copy the secret to \
-                paste it into the setup on your next device.
+                Give another device this card and it will trust you. Cards last \
+                30 days and renew themselves here, so copy a fresh one if the \
+                other device says yours has expired. The fingerprint is what you \
+                compare when trading cards in person.
                 """)
         }
     }
@@ -100,129 +86,60 @@ struct HubView: View {
             } label: {
                 Label("Start a connection", systemImage: "antenna.radiowaves.left.and.right")
             }
+            .disabled(controller.peers.isEmpty)
             Button {
                 step = .join
             } label: {
-                Label("Join another device", systemImage: "personalhotspot")
+                Label("Join a device", systemImage: "personalhotspot")
             }
+            .disabled(controller.peers.isEmpty)
         } header: {
-            Text("Pair")
+            Text("Share the clipboard")
         } footer: {
-            Text("""
-                Start makes this device host the connection — the other device \
-                joins it. Join shows your other devices and connects to the one \
-                that started.
-                """)
+            if controller.peers.isEmpty {
+                Text("""
+                    No trusted devices yet. Trade cards with your other device \
+                    below — after that, one side starts a connection and the \
+                    other joins it.
+                    """)
+            } else {
+                Text("""
+                    Start makes this device host the connection; the other device \
+                    joins it. Join lists the devices you trust and connects to \
+                    the one that started. The join retries for a short while, so \
+                    press Start on the other device if it isn't hosting yet.
+                    """)
+            }
         }
     }
 
-    private var quickSection: some View {
+    private var cardSetupSection: some View {
         Section {
             Button {
-                step = .quick
+                step = .cardSetup
             } label: {
-                Label("Quick pair with a PIN", systemImage: "bolt")
+                Label("Trade cards", systemImage: "person.badge.key")
             }
-        } footer: {
-            Text("""
-                Quick pair connects to any duocb device via a short PIN, even \
-                one that doesn't share your secret.
-                """)
-        }
-    }
-}
-
-/// The device picker: the list of your other devices, shown only when the
-/// user chose Join. Tap a device to connect to it. The list refreshes
-/// on entry, by pull, and every 30 s while visible.
-struct JoinView: View {
-    @Environment(SessionController.self) private var controller
-    @Binding var step: ConfigureView.Step
-
-    var body: some View {
-        List {
-            if let hubError = controller.hubError {
-                Section {
-                    Label(hubError, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .font(.footnote)
-                    Button("Retry") { controller.retryHub() }
-                        .buttonStyle(.borderless)
-                }
-            }
-            devicesSection
-            Section {
-                Button("Back", role: .cancel) {
-                    controller.stopHub()
-                    step = .hub
-                }
-            }
-        }
-        .refreshable { controller.refreshPeers() }
-        .onAppear {
-            // The picker may be reached with no hub running yet (e.g. straight
-            // after a session ended); make sure presence + fetching are up.
-            controller.startHub()
-            controller.setPeerListVisible(true)
-        }
-        .onDisappear { controller.setPeerListVisible(false) }
-    }
-
-    private var devicesSection: some View {
-        Section {
-            if controller.peers.isEmpty {
-                Text(controller.peersRefreshedAt == nil
-                    ? "Looking for your other devices…"
-                    : "No other devices found yet. Import the same secret on your other device and it will appear here.")
-                    .foregroundStyle(.secondary)
-                    .font(.footnote)
-            }
-            ForEach(controller.peers) { peer in
+            if !controller.peers.isEmpty {
                 Button {
-                    controller.join(peerDisplay: peer.display)
+                    step = .join
                 } label: {
-                    peerRow(peer)
+                    Label(
+                        "Trusted devices (\(controller.peers.count))",
+                        systemImage: "checkmark.shield"
+                    )
                 }
             }
         } header: {
-            HStack {
-                Text("Your devices")
-                Spacer()
-                if let at = controller.peersRefreshedAt {
-                    (Text("updated ") + Text(at, style: .relative) + Text(" ago"))
-                        .textCase(nil)
-                }
-            }
+            Text("Trust")
         } footer: {
             Text("""
-                Tap a device to join it. If it isn't hosting yet, press Start \
-                there — the join retries every few seconds for up to 10 \
-                attempts. If it gives up first, choose Join again and tap the \
-                device. Pull down to refresh.
+                Trading cards is how two devices come to trust each other: one \
+                shows a PIN, the other types it, and you confirm the same \
+                fingerprint appears on both screens before either card is kept. \
+                It carries no clipboard content and ends as soon as the cards \
+                have crossed.
                 """)
         }
-    }
-
-    private func peerRow(_ peer: PeerInfo) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(peer.display)
-                    .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(.primary)
-                Text(peerSubtitle(peer))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text("Join")
-                .font(.callout)
-                .foregroundStyle(.tint)
-        }
-    }
-
-    /// The record's age, not an online/offline verdict — relay timing is too
-    /// unreliable for one, and joining never requires it.
-    private func peerSubtitle(_ peer: PeerInfo) -> String {
-        "seen \(peer.lastSeenText)"
     }
 }

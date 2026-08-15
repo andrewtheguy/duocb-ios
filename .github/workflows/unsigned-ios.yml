@@ -71,11 +71,19 @@ jobs:
             exit 1
           fi
 
-          if [[ "$(plutil -extract NSBonjourServices.0 raw -o - \
-            "$app_path/Info.plist")" != "_duocb-pin._udp" ]]; then
-            echo "::error::The archived app lost its Bonjour service declaration"
-            exit 1
-          fi
+          # Both types matter and both fail silently if dropped:
+          # _duocb-pin._udp carries card setup, _duocb-host._udp carries the
+          # clipboard session's LAN-first hosting record. An app that can trade
+          # cards but never find a session is exactly what losing the second
+          # one produces.
+          services="$(plutil -extract NSBonjourServices json -o - \
+            "$app_path/Info.plist")"
+          for service in _duocb-pin._udp _duocb-host._udp; do
+            if [[ "$services" != *"$service"* ]]; then
+              echo "::error::The archived app does not declare the $service Bonjour service"
+              exit 1
+            fi
+          done
 
           mkdir -p "$artifact_dir" "$package_root/Payload"
           ditto --norsrc --noextattr --noqtn --noacl \

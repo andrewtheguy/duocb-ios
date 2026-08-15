@@ -3,12 +3,17 @@
 # Generate the Xcode project with:   xcodegen generate
 # Then open Duocb.xcodeproj, select your signing Team, and run.
 #
-# The app is the iOS peer of the desktop duocb clipboard-sharing app,
-# supporting config/token mode (start or join a standing pairing with a
-# shared auth token) and PIN quick pair (ephemeral, identity-less). The
-# networking runs in-process (iroh QUIC + nostr signaling from the Rust core)
-# — no Network Extension, no special entitlement, no paid Apple Developer
-# account required; it also runs in the Simulator.
+# The app is the iOS peer of the desktop duocb clipboard-sharing app. Each
+# device holds its own application keypair and a signed identity card; two
+# devices come to trust each other by trading cards over a rotating PIN (card
+# setup), after which either can host a clipboard session and the other joins
+# it. The networking runs in-process (iroh QUIC, with the rendezvous over
+# Bonjour and/or nostr from the Rust core) — no Network Extension, no special
+# entitlement, no paid Apple Developer account required; it also runs in the
+# Simulator. The one iOS difference is that iroh's own mDNS address lookup is
+# compiled out of the core (it needs Apple's restricted multicast
+# entitlement); regular mDNS still works, through the system mDNSResponder
+# daemon, which is why Info.plist declares both Bonjour service types.
 #
 # The Rust static library + header come from the local Swift package in
 # Packages/Duocb — a binary target that downloads the pinned release zip by
@@ -82,7 +87,7 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: Sources/DuocbApp/DuocbApp.entitlements
         INFOPLIST_FILE: Sources/DuocbApp/Info.plist
-        MARKETING_VERSION: "0.0.31"
+        MARKETING_VERSION: "0.0.34"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_OBJC_BRIDGING_HEADER: Sources/DuocbApp/Bridging-Header.h
         # No HEADER_SEARCH_PATHS needed: SPM puts the binary target's embedded
