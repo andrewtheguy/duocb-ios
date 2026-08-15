@@ -180,8 +180,17 @@ struct CardSetupView: View {
     /// Keep the field to the PIN's shape, displayed as two dash-separated
     /// groups. Character filtering and the alias mapping (I/L→1, O→0) come from
     /// the Rust core, so the field can never hold something the code omits.
+    ///
+    /// Also capped at the PIN's length. Without it the field keeps accepting
+    /// characters past the eighth, and since a PIN is only ever exactly that
+    /// long, the extra ones can do nothing but turn a valid code into an
+    /// invalid one — the far more likely reading of a ninth keystroke is a
+    /// double tap, not a different PIN.
     private func sanitize(_ value: String) {
-        let raw = SessionController.sanitizePIN(value)
+        let raw = String(
+            SessionController.sanitizePIN(value)
+                .prefix(SessionController.pinProgress(value).total)
+        )
         var grouped = String(raw.prefix(4))
         if raw.count > 4 {
             grouped += "-" + raw.dropFirst(4)
@@ -346,22 +355,5 @@ struct CardConfirmView: View {
         }
         .navigationTitle("Confirm")
         .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-extension SessionController.Phase {
-    /// Phase → user copy, mirroring the desktop's status_text().
-    var statusText: String {
-        switch self {
-        case .idle: "Idle"
-        case .starting: "Starting…"
-        case .listening: "Waiting for the other device…"
-        case .resolving: "Looking for the other device…"
-        case .connecting: "Connecting…"
-        case .authenticating: "Authenticating…"
-        case .connected: "Connected"
-        case .reconnecting(let attempt, let max): "Reconnecting… (attempt \(attempt) of \(max))"
-        case .failed(let message): "Failed: \(message)"
-        }
     }
 }

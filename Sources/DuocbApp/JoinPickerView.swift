@@ -15,6 +15,10 @@ struct JoinPickerView: View {
     @State private var importDraft = ""
     @State private var importError: String?
     @State private var pendingRemoval: TrustedPeer?
+    /// The pasted card decoded, or nil while it is empty or invalid. Cached
+    /// rather than recomputed in `body`: decoding verifies the card's signature,
+    /// and `body` is evaluated on every keystroke and reads it more than once.
+    @State private var preview: IdentityCardInfo?
 
     var body: some View {
         List {
@@ -108,12 +112,15 @@ struct JoinPickerView: View {
                     .lineLimit(2...6)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
-                    .onChange(of: importDraft) { _, _ in importError = nil }
+                    .onChange(of: importDraft, initial: true) { _, draft in
+                        importError = nil
+                        preview = Self.decode(draft)
+                    }
                 if let importError {
                     Text(importError)
                         .font(.footnote)
                         .foregroundStyle(.red)
-                } else if let info = previewInfo {
+                } else if let info = preview {
                     LabeledContent("Device") {
                         Text(info.name).font(.system(.footnote, design: .monospaced))
                     }
@@ -127,12 +134,18 @@ struct JoinPickerView: View {
                         .font(.caption)
                         .foregroundStyle(info.expired ? .orange : .secondary)
                 }
+                // Read at tap time, never gated on `hasStrings`: SwiftUI does not
+                // re-render when the pasteboard changes, so a button disabled at
+                // first render stays disabled after the user copies the card.
                 Button("Paste") {
-                    if let pasted = UIPasteboard.general.string {
-                        importDraft = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let pasted = (UIPasteboard.general.string ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if pasted.isEmpty {
+                        importError = "The clipboard is empty"
+                    } else {
+                        importDraft = pasted
                     }
                 }
-                .disabled(!UIPasteboard.general.hasStrings)
                 Button("Trust this device") {
                     if let error = controller.importPeerCard(importDraft) {
                         importError = error
@@ -141,7 +154,9 @@ struct JoinPickerView: View {
                         showImport = false
                     }
                 }
-                .disabled(previewInfo == nil)
+                // An expired card is refused by the import itself (it records
+                // trust that can never pair), and the expiry line above says so.
+                .disabled(preview == nil)
                 Button("Cancel", role: .cancel) {
                     importDraft = ""
                     importError = nil
@@ -165,9 +180,10 @@ struct JoinPickerView: View {
         }
     }
 
-    /// The pasted card decoded for preview, or nil while it is empty or invalid.
-    private var previewInfo: IdentityCardInfo? {
-        let trimmed = importDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Decode a pasted card for the preview, or nil while it is empty or
+    /// invalid. Verifies the signature, so it is called on edit, not in `body`.
+    private static func decode(_ draft: String) -> IdentityCardInfo? {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         return IdentityCardInfo.parse(card: trimmed)
     }

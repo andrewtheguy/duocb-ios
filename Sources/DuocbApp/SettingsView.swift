@@ -8,6 +8,7 @@ import SwiftUI
 /// channel underneath itself, which is the same guarantee in practice.
 struct SettingsView: View {
     @Environment(SessionController.self) private var controller
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var step: SetupView.Step
 
     @State private var confirmReset = false
@@ -24,6 +25,17 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        // Hide the key before the system takes its snapshot. iOS captures the
+        // window as the app leaves the foreground and shows that image in the
+        // app switcher and on the next launch — a revealed private key would be
+        // in it, and the snapshot outlives the app's own memory. `.inactive`
+        // is the phase the capture happens in, so anything short of active
+        // re-hides it.
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active {
+                revealPrivateKey = false
+            }
+        }
         .confirmationDialog(
             "Start over with a new identity?",
             isPresented: $confirmReset,

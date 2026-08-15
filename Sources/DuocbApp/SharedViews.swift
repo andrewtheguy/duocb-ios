@@ -17,6 +17,56 @@ struct AppVersionSection: View {
     }
 }
 
+extension SessionController.Phase {
+    /// Phase → user copy, mirroring the desktop's status_text(). Lives here
+    /// rather than beside one of its callers: both the card-pairing screen and
+    /// the clipboard session show the same status line.
+    var statusText: String {
+        switch self {
+        case .idle: "Idle"
+        case .starting: "Starting…"
+        case .listening: "Waiting for the other device…"
+        case .resolving: "Looking for the other device…"
+        case .connecting: "Connecting…"
+        case .authenticating: "Authenticating…"
+        case .connected: "Connected"
+        case .reconnecting(let attempt, let max): "Reconnecting… (attempt \(attempt) of \(max))"
+        case .failed(let message): "Failed: \(message)"
+        }
+    }
+}
+
+/// The unreadable-config banner: a settings file exists that could not be read,
+/// so nothing will be saved until the user decides to discard it. Shown on the
+/// screens setup can begin from, because that is where a first save is about to
+/// be attempted and silently refused.
+struct ConfigFailureSection: View {
+    @Environment(SessionController.self) private var controller
+
+    var body: some View {
+        if let reason = controller.configError {
+            Section {
+                Label(reason, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .font(.footnote)
+                Button("Discard the stored settings and start over", role: .destructive) {
+                    controller.discardUnreadableConfig()
+                }
+                .buttonStyle(.borderless)
+            } header: {
+                Text("Settings could not be read")
+            } footer: {
+                Text("""
+                    Nothing is saved while this is unresolved, so this device's \
+                    name and trusted devices cannot change. Discarding writes a \
+                    fresh file and loses whatever the old one held — including \
+                    every trusted device, which then have to be traded again.
+                    """)
+            }
+        }
+    }
+}
+
 /// The failed-session banner (message + Reconnect/Dismiss), shared by every
 /// screen a dead session can land on.
 struct SessionFailureSection: View {
@@ -103,16 +153,40 @@ struct CopyButton: View {
     }
 }
 
-/// A fingerprint, rendered for eye-comparison across two screens: monospaced,
-/// selectable, and wide enough that the grouping never re-wraps differently on
-/// the two devices.
+/// A fingerprint, rendered for eye-comparison across two screens.
+///
+/// The layout is fixed rather than fitted, and that is the whole point: the
+/// comparison this supports is "do these two screens show the same thing", and
+/// a phone and a laptop — or two phones at different Dynamic Type settings —
+/// would wrap free-flowing text at different groups, so the same fingerprint
+/// would read as two different shapes. Instead the groups are laid out
+/// `groupsPerLine` at a time, identically everywhere, and a narrow screen
+/// shrinks the glyphs instead of re-wrapping them.
 struct FingerprintText: View {
     let fingerprint: String
+    /// Five 4-hex-digit groups is the core's whole fingerprint (10 bytes, see
+    /// `key_fingerprint`), so this normally puts it on one line.
+    var groupsPerLine = 5
+
+    private var lines: [String] {
+        let groups = fingerprint.split(separator: " ")
+        let perLine = max(1, groupsPerLine)
+        return stride(from: 0, to: groups.count, by: perLine).map { start in
+            groups[start..<min(start + perLine, groups.count)].joined(separator: " ")
+        }
+    }
 
     var body: some View {
-        Text(fingerprint)
-            .font(.system(.callout, design: .monospaced))
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { line in
+                Text(line.element)
+                    .font(.system(.callout, design: .monospaced))
+                    .lineLimit(1)
+                    // Shrink rather than wrap: a re-wrap changes the shape, a
+                    // smaller glyph does not.
+                    .minimumScaleFactor(0.5)
+            }
+        }
+        .textSelection(.enabled)
     }
 }

@@ -77,6 +77,7 @@ private struct IdentityChoiceView: View {
     var body: some View {
         Form {
             SessionFailureSection()
+            ConfigFailureSection()
             Section {
                 Button {
                     // Persist immediately and go straight to naming: the key is
@@ -117,6 +118,7 @@ private struct IdentityImportView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: SetupView.Step
     @State private var draft = ""
+    @State private var pasteError: String?
 
     private var trimmed: String {
         draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -143,12 +145,25 @@ private struct IdentityImportView: View {
                         FingerprintText(fingerprint: fingerprint)
                     }
                 }
+                // Read at tap time and never gated on `hasStrings`: SwiftUI does
+                // not re-render when the pasteboard changes, so a button
+                // disabled at first render stays disabled after the user copies
+                // the key — with nothing on screen to explain why.
                 Button("Paste") {
-                    if let pasted = UIPasteboard.general.string {
-                        draft = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let pasted = (UIPasteboard.general.string ?? "")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if pasted.isEmpty {
+                        pasteError = "The clipboard is empty"
+                    } else {
+                        pasteError = nil
+                        draft = pasted
                     }
                 }
-                .disabled(!UIPasteboard.general.hasStrings)
+                if let pasteError {
+                    Text(pasteError)
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
             } header: {
                 Text("Restore this device's identity")
             } footer: {
@@ -200,6 +215,18 @@ private struct NameDeviceView: View {
 
     var body: some View {
         Form {
+            ConfigFailureSection()
+            if controller.suffix == nil {
+                Section {
+                    Label("""
+                        This device's permanent id could not be stored, so it \
+                        cannot be named. The Keychain refused the write — \
+                        reinstalling the app usually clears it.
+                        """, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                        .font(.footnote)
+                }
+            }
             Section {
                 TextField("e.g. phone", text: $draft)
                     .autocorrectionDisabled()
@@ -208,9 +235,9 @@ private struct NameDeviceView: View {
                     Text(nameError)
                         .font(.footnote)
                         .foregroundStyle(.orange)
-                } else if nameError == nil {
+                } else if nameError == nil, let suffix = controller.suffix {
                     LabeledContent("Card name") {
-                        Text(SessionController.displayIdentity(name: trimmed, suffix: controller.suffix))
+                        Text(SessionController.displayIdentity(name: trimmed, suffix: suffix))
                             .font(.system(.footnote, design: .monospaced))
                     }
                 }
@@ -224,11 +251,16 @@ private struct NameDeviceView: View {
             }
 
             Section {
+                // Advance only once the name *and* the card it mints are
+                // committed; a name with no card is an identity that cannot
+                // host, join or be trusted, so the hub behind this would be
+                // one where every action fails.
                 Button(controller.selfCard == nil ? "Save name" : "Rename and re-issue card") {
-                    controller.saveName(trimmed)
-                    step = .hub
+                    if controller.saveName(trimmed) {
+                        step = .hub
+                    }
                 }
-                .disabled(nameError != nil)
+                .disabled(nameError != nil || controller.suffix == nil)
                 if controller.hasIdentity {
                     Button("Cancel", role: .cancel) {
                         step = .hub
@@ -252,6 +284,11 @@ private struct NameDeviceView: View {
 
     /// A reasonable default from the device name: lowercased, non-alphanumerics
     /// collapsed to single dashes (e.g. "Bob's iPhone" → "bob-s-iphone").
+    ///
+    /// Falls back to a fixed name when nothing survives normalization — a
+    /// device called "我的手機" has no ASCII alphanumerics at all, and an empty
+    /// field would present the naming screen already failing its own
+    /// validation, with no hint that a name is what it wants.
     private static func defaultDeviceName() -> String {
         let collapsed = UIDevice.current.name.lowercased()
             .map { $0.isASCII && ($0.isLetter || $0.isNumber) ? String($0) : "-" }
@@ -259,6 +296,6 @@ private struct NameDeviceView: View {
         let name = collapsed
             .split(separator: "-", omittingEmptySubsequences: true)
             .joined(separator: "-")
-        return String(name.prefix(24))
+        return name.isEmpty ? "phone" : String(name.prefix(24))
     }
 }

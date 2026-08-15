@@ -212,13 +212,23 @@ job_unsigned() {
     # second one produces.
     [ -n "$(plutil -extract NSLocalNetworkUsageDescription raw -o - "$app/Info.plist")" ] \
         || die 'the archived app lost its local network usage description'
-    local services
-    services=$(plutil -extract NSBonjourServices json -o - "$app/Info.plist")
+    # Entry by entry, compared whole. A substring test over the raw JSON would
+    # accept `_duocb-pin._udp2` or a service merely mentioned inside another
+    # string, and Bonjour matches the type exactly — an assertion looser than
+    # the thing it is protecting proves nothing.
+    local services=() i=0 entry
+    while entry=$(plutil -extract "NSBonjourServices.$i" raw -o - "$app/Info.plist" 2>/dev/null); do
+        services+=("$entry")
+        i=$((i + 1))
+    done
+    [ ${#services[@]} -gt 0 ] || die 'the archived app declares no Bonjour services at all'
+    local found service
     for service in _duocb-pin._udp _duocb-host._udp; do
-        case $services in
-            *"$service"*) ;;
-            *) die "the archived app does not declare the $service Bonjour service" ;;
-        esac
+        found=false
+        for entry in "${services[@]}"; do
+            [ "$entry" = "$service" ] && found=true
+        done
+        $found || die "the archived app does not declare the $service Bonjour service"
     done
     info 'archive assertions passed'
 }

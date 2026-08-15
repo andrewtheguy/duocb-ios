@@ -2,7 +2,7 @@
 #
 # Run this repo's CI checks on the macOS build host, from a Linux checkout.
 #
-#   scripts/mac-ci.sh                 # the default jobs
+#   scripts/mac-ci.sh                 # simulator, smoke, unsigned
 #   scripts/mac-ci.sh simulator smoke # only these
 #   scripts/mac-ci.sh ffi             # rebuild the Rust core and link against it
 #   scripts/mac-ci.sh --sync-only     # push the trees, run nothing
@@ -108,9 +108,22 @@ if $sync_only; then
     exit 0
 fi
 
+# ci/ci.sh's own default set includes `device`, which cannot work over ssh (see
+# the header), so a bare `mac-ci.sh` would run three jobs and then fail on a
+# fourth it was never going to be able to run. Name the signing-free ones
+# instead. Asking for `device` explicitly still reaches ci/ci.sh's own check,
+# which explains what to unlock.
+has_job=false
+if [ ${#args[@]} -gt 0 ]; then
+    for arg in "${args[@]}"; do
+        case $arg in -*) ;; *) has_job=true ;; esac
+    done
+fi
+$has_job || args+=(simulator smoke unsigned)
+
 # -t so the remote job dies with this terminal instead of orphaning an
 # xcodebuild on the Mac when you Ctrl-C. Login shell for Homebrew's PATH
 # (xcodegen) and ~/.cargo/bin.
-info "running ci/ci.sh ${args[*]:-(default jobs)} on $HOST"
+info "running ci/ci.sh ${args[*]} on $HOST"
 exec ssh -t "$HOST" \
     "bash -lc 'cd \"$REMOTE_REPO\" && ci/ci.sh ${args[*]}'"

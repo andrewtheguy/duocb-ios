@@ -14,6 +14,10 @@ enum DuocbBuffer {
     static let card = 4096
     static let cardInfo = 1024
     static let joinIP = 256
+    /// `duocb_pin_progress`'s JSON object.
+    static let pinProgress = 128
+    /// `duocb_resolve_join_ip`'s single dotted-quad answer.
+    static let joinIPAddress = 32
     static let error = 1024
 }
 
@@ -90,8 +94,11 @@ struct IdentityCardInfo: Equatable {
     /// wording — "expires 2026-09-13", or "expired" once it has lapsed.
     var expiryText: String {
         if expired { return "expired" }
-        return "expires \(Self.dayFormatter.string(from: expiryDate))"
+        return "expires \(expiryDateText)"
     }
+
+    /// The expiry date alone, for a message that supplies its own wording.
+    var expiryDateText: String { Self.dayFormatter.string(from: expiryDate) }
 
     private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()

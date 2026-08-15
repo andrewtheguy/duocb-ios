@@ -15,7 +15,11 @@ struct HubView: View {
     var body: some View {
         List {
             SessionFailureSection()
-            if let error = controller.lastError {
+            ConfigFailureSection()
+            // Only when the failure banner is not already up. `fail` passes
+            // `lastError` through as the phase's message, so on a failed session
+            // the two say the same sentence twice, each with its own Dismiss.
+            if !isFailed, let error = controller.lastError {
                 Section {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.orange)
@@ -36,6 +40,11 @@ struct HubView: View {
             }
             AppVersionSection()
         }
+    }
+
+    private var isFailed: Bool {
+        if case .failed = controller.phase { return true }
+        return false
     }
 
     // MARK: - Sections

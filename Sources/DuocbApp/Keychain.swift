@@ -111,17 +111,25 @@ enum IdentityStore {
 enum SuffixStore {
     private static let service = "com.andrewtheguy.duocb.deviceSuffix"
 
-    /// The permanent suffix, minted and persisted on the first call.
-    static func loadOrCreate() -> String {
+    /// The permanent suffix, minted and persisted on the first call. nil when it
+    /// could not be minted or could not be stored.
+    ///
+    /// A suffix that only exists in memory is worse than none: the next launch
+    /// would mint a different one, so this device's identity would rename itself
+    /// behind the user's back and every card it has handed out would name a
+    /// device nobody can find. So the write has to succeed before the value
+    /// counts as this device's — the caller refuses to finish setup otherwise,
+    /// the same way `IdentityStore.save` gates the private key.
+    static func loadOrCreate() -> String? {
         if let existing = Keychain.load(service: service) {
             return existing
         }
         var buf = [CChar](repeating: 0, count: DuocbBuffer.suffix)
         guard duocb_generate_suffix(&buf, buf.count) == 1 else {
-            return "" // unreachable: the buffer is ample and never NULL
+            return nil // the buffer is ample and never NULL, so this is a bug
         }
         let suffix = String(cString: buf)
-        Keychain.save(suffix, service: service)
+        guard Keychain.save(suffix, service: service) else { return nil }
         return suffix
     }
 }

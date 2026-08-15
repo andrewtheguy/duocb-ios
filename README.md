@@ -204,7 +204,7 @@ override with `DUOCB_MAC_HOST`), then runs `ci/ci.sh` there and streams the
 output back.
 
 ```sh
-scripts/mac-ci.sh                        # simulator, smoke, unsigned, device
+scripts/mac-ci.sh                        # simulator, smoke, unsigned
 scripts/mac-ci.sh ffi                    # rebuild the Rust core for iOS and link it
 scripts/mac-ci.sh --local simulator smoke
 scripts/mac-ci.sh --sync-only            # push the trees, run nothing
@@ -215,6 +215,8 @@ in `Packages/Duocb/Package.swift`; it is required whenever the FFI has changed
 but no release carries that change yet.
 
 The `device` job is the one that cannot run over ssh: codesign needs a private
-key from the login keychain, which an ssh session leaves locked. `ci/ci.sh`
-detects this and prints the unlock commands, which need the account password —
-run that job from a GUI session on the Mac instead.
+key from the login keychain, which an ssh session leaves locked. It is in
+`ci/ci.sh`'s default set but not in `scripts/mac-ci.sh`'s, so a bare run over
+ssh does not end on a job that was never going to work; ask for it by name and
+`ci/ci.sh` prints the unlock commands, which need the account password — or run
+it from a GUI session on the Mac instead.

@@ -52,11 +52,19 @@ struct DuocbConfig: Codable, Equatable {
         self.channel = channel
     }
 
-    /// Tolerant of missing keys so a file written by an older build still
-    /// loads with defaults rather than resetting the whole identity.
+    /// Tolerant of *missing* keys — a file truncated by a full disk, or one
+    /// edited by hand, still yields the fields it does carry rather than
+    /// throwing away a trusted-device list over an absent `channel`.
+    ///
+    /// Tolerance stops at the shape: `version` is checked against
+    /// `currentVersion` by `ConfigStore.load()`, which refuses anything else
+    /// outright, exactly as the desktop's loader does. There is no migration
+    /// path and there is not meant to be one.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        version = try container.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
+        // Required, unlike everything below it: a file with no version is not a
+        // file this build wrote, and guessing one for it would defeat the check.
+        version = try container.decode(Int.self, forKey: .version)
         myName = try container.decodeIfPresent(String.self, forKey: .myName)
         selfCard = try container.decodeIfPresent(String.self, forKey: .selfCard)
         peers = try container.decodeIfPresent([String].self, forKey: .peers) ?? []
@@ -72,12 +80,48 @@ struct DuocbConfig: Codable, Equatable {
 /// their whole trusted-device list, which is only recoverable by re-trading
 /// cards with every device.
 enum ConfigStore {
-    static func load() -> DuocbConfig {
-        guard let url = fileURL(),
-              let data = try? Data(contentsOf: url),
-              let config = try? JSONDecoder().decode(DuocbConfig.self, from: data)
-        else { return .empty }
-        return config
+    /// What `load` found. The distinction that matters is the last case: a file
+    /// that exists but cannot be read is *not* the same as no file at all, and
+    /// treating it as one would hand back an empty config that the next save
+    /// writes straight over the top of — turning a transient read failure, or a
+    /// config from a build that is not this one, into a permanently lost
+    /// trusted-device list.
+    enum Outcome {
+        /// A file was read and decoded.
+        case loaded(DuocbConfig)
+        /// No file yet — a first launch, or an identity that was reset.
+        case missing
+        /// A file is there and unusable. Carries the reason for the banner.
+        case unreadable(String)
+    }
+
+    static func load() -> Outcome {
+        guard let url = fileURL() else {
+            return .unreadable("This device has no Application Support directory")
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch let error as CocoaError
+            // A read of a missing file reports `fileReadNoSuchFile` (260), not
+            // the bare `fileNoSuchFile` (4); both are matched so the distinction
+            // cannot quietly turn a first launch into an unreadable config.
+            where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile
+        {
+            return .missing
+        } catch {
+            return .unreadable("Settings could not be read: \(error.localizedDescription)")
+        }
+        guard let config = try? JSONDecoder().decode(DuocbConfig.self, from: data) else {
+            return .unreadable("Settings are corrupt or from a different version of the app")
+        }
+        guard config.version == DuocbConfig.currentVersion else {
+            return .unreadable("""
+                Settings are version \(config.version); this app uses version \
+                \(DuocbConfig.currentVersion) and does not convert older ones
+                """)
+        }
+        return .loaded(config)
     }
 
     @discardableResult

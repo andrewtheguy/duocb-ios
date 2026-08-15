@@ -95,10 +95,16 @@ final class SessionController {
     /// This installation's application private key (`nsec`), or nil before
     /// setup. Backed by the Keychain.
     private(set) var identitySecret: String? = IdentityStore.load()
-    /// This device's permanent identity suffix, minted on first launch.
-    let suffix: String = SuffixStore.loadOrCreate()
+    /// This device's permanent identity suffix, minted on first launch. nil
+    /// only when the Keychain refused the write, which blocks setup — see
+    /// `SuffixStore.loadOrCreate`.
+    let suffix: String? = SuffixStore.loadOrCreate()
     /// The device name, self-card, trusted peer cards and channel choice.
-    private(set) var config: DuocbConfig = ConfigStore.load()
+    private(set) var config: DuocbConfig = .empty
+    /// Non-nil when a config file exists that could not be read. Everything in
+    /// memory is then a default rather than this device's real state, so
+    /// `persist()` refuses to write over the file until the user resolves it.
+    private(set) var configError: String?
     /// `config.peers`, parsed — the trusted-device rows.
     private(set) var peers: [TrustedPeer] = []
 
@@ -112,7 +118,10 @@ final class SessionController {
     }
 
     /// The identity other devices see, e.g. "phone_a7B2c3D4".
-    var displayIdentity: String? { config.myName.map { "\($0)_\(suffix)" } }
+    var displayIdentity: String? {
+        guard let name = config.myName, let suffix else { return nil }
+        return "\(name)_\(suffix)"
+    }
 
     /// This device's key fingerprint — shown on the hub, and the value the
     /// other device's user compares against during card setup.
@@ -149,16 +158,57 @@ final class SessionController {
     private(set) var lastSession: (role: Role, peerKey: String?, pin: String?, ip: String?)?
 
     var isSessionActive: Bool { handle != nil }
+
+    /// The role of a session that has been asked for but has no handle yet.
+    ///
+    /// Starting a session while another is still winding down is asynchronous:
+    /// `teardown` clears the handle immediately and `startRuntime` runs only
+    /// once `duocb_stop` has returned off-thread. Without this the app would
+    /// drop back to the hub for that gap and then jump to the session screen —
+    /// a flash that reads like the tap did not register. `.starting` with no
+    /// handle is exactly that window; every other phase falls through to the
+    /// handle-based answer, so a start that fails still lands on the failure.
+    private var pendingRole: Role? {
+        guard handle == nil, phase == .starting else { return nil }
+        return lastSession?.role
+    }
+
+    /// The running session's role, or the one that is about to start.
+    /// `currentRole` and `handle` are set and cleared together, so this is nil
+    /// exactly when no session owns the screen.
+    private var activeRole: Role? { currentRole ?? pendingRole }
+
     /// Card setup is on screen: the PIN/dialing screen, not the clipboard one.
-    var isCardSetupActive: Bool { handle != nil && (currentRole?.isCardSetup ?? false) }
+    var isCardSetupActive: Bool { activeRole?.isCardSetup == true }
     /// A clipboard session is on screen.
-    var isClipboardSessionActive: Bool { handle != nil && !(currentRole?.isCardSetup ?? false) }
-    var isHostingRole: Bool { currentRole?.isHost ?? false }
+    var isClipboardSessionActive: Bool { activeRole.map { !$0.isCardSetup } ?? false }
+    var isHostingRole: Bool { activeRole?.isHost ?? false }
 
     init() {
         duocb_init_logging()
+        switch ConfigStore.load() {
+        case .loaded(let stored):
+            config = stored
+        case .missing:
+            break // first launch: the defaults are correct
+        case .unreadable(let reason):
+            // Left at the defaults deliberately, and flagged: the real file
+            // stays on disk untouched until the user says to discard it.
+            configError = reason
+        }
         reloadPeers()
         renewSelfCardIfNeeded()
+    }
+
+    /// Give up on a config file that could not be read and start from defaults,
+    /// overwriting it. The only way out of `configError`, and deliberately an
+    /// explicit user action — the alternative is silently discarding a trusted
+    /// list that a later build, or a fixed permission, could still have read.
+    func discardUnreadableConfig() {
+        configError = nil
+        config = .empty
+        peers = []
+        persist()
     }
 
     #if DEBUG
@@ -227,7 +277,10 @@ final class SessionController {
         }
         let name = env["DUOCB_AUTOSTART_NAME"] ?? "phone"
         if config.myName != name || config.selfCard == nil {
-            saveName(name)
+            guard saveName(name) else {
+                NSLog("[duocb] autostart: could not name this device — no suffix or no card")
+                return
+            }
         }
         if let card = env["DUOCB_AUTOSTART_PEER_CARD"] {
             _ = importPeerCard(card)
@@ -362,7 +415,7 @@ final class SessionController {
     /// How many PIN characters are entered and how many a full PIN needs, for
     /// the "keep typing" hint.
     nonisolated static func pinProgress(_ input: String) -> (entered: Int, total: Int) {
-        var buf = [CChar](repeating: 0, count: 128)
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.pinProgress)
         guard input.withCString({ duocb_pin_progress($0, &buf, buf.count) }) == 1,
               let data = String(cString: buf).data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -408,7 +461,7 @@ final class SessionController {
     }
 
     nonisolated static func resolveJoinIP(_ entry: String) -> JoinIPOutcome {
-        var buf = [CChar](repeating: 0, count: 32)
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.joinIPAddress)
         let rc = entry.withCString { duocb_resolve_join_ip($0, &buf, buf.count) }
         switch rc {
         case 1: return .inRange(String(cString: buf))
@@ -436,7 +489,7 @@ final class SessionController {
         reloadPeers()
         // Keep the name as a prefill, but re-mint the card under the new key if
         // one was already confirmed.
-        if let name = config.myName {
+        if let name = config.myName, let suffix {
             config.selfCard = Self.createIdentityCard(nsec: nsec, name: name, suffix: suffix)
         }
         persist()
@@ -447,11 +500,22 @@ final class SessionController {
     /// The card is the thing other devices store, so a rename means a new card
     /// — and peers keep trusting the old one until its owner hands over the new
     /// one, which is why the name is not a live-updating field.
-    func saveName(_ name: String) {
-        guard let nsec = identitySecret else { return }
+    ///
+    /// Returns whether the name was committed. The name and the card go in
+    /// together or not at all: a name with no card is an identity that cannot
+    /// host, join or be trusted, and the naming screen would have moved on to a
+    /// hub whose every action fails.
+    @discardableResult
+    func saveName(_ name: String) -> Bool {
+        guard let nsec = identitySecret, let suffix else { return false }
+        guard let card = Self.createIdentityCard(nsec: nsec, name: name, suffix: suffix) else {
+            lastError = "Could not issue this device's identity card"
+            return false
+        }
         config.myName = name
-        config.selfCard = Self.createIdentityCard(nsec: nsec, name: name, suffix: suffix)
+        config.selfCard = card
         persist()
+        return true
     }
 
     /// Start over with a fresh application identity: a new keypair, no name, no
@@ -462,11 +526,19 @@ final class SessionController {
         teardown {}
         IdentityStore.clear()
         identitySecret = nil
+        // The channel is a transport preference, not part of the identity —
+        // the desktop keeps it too (it is a launch flag there, which a reset
+        // cannot touch), so losing it here would be a gratuitous difference.
+        let channel = config.channel
         config = .empty
+        config.channel = channel
         peers = []
         lastSession = nil
         incomingCard = nil
-        ConfigStore.save(config)
+        // A reset is also the way out of an unreadable config: it is the one
+        // action whose whole purpose is to discard what was stored.
+        configError = nil
+        persist()
     }
 
     func setChannel(_ channel: SignalChannel) {
@@ -524,7 +596,21 @@ final class SessionController {
     /// Add or replace a peer, keyed on public key: a re-traded card from the
     /// same device is a *renewal*, so it replaces the stored copy rather than
     /// appearing twice. Returns nil on success, else the reason.
+    ///
+    /// The single place trust is granted, so a card that arrived over card
+    /// setup is held to exactly the same rules as one pasted in by hand
+    /// (desktop parity: `store_peer_card` in app/mod.rs).
     private func store(_ peer: TrustedPeer) -> String? {
+        // Storing a lapsed card would record trust that can never pair, so it
+        // is refused here rather than at the first Join. Cards already in the
+        // list are a different question — those stay, in warning colour, so
+        // they remain visible and removable.
+        if peer.info.expired {
+            return """
+                That identity card expired on \(peer.info.expiryDateText) — \
+                get a fresh one from the other device
+                """
+        }
         if let existing = peers.first(where: { $0.id == peer.id }) {
             config.peers.removeAll { $0 == existing.card }
         } else if peers.count >= Self.maxTrustedPeers {
@@ -541,7 +627,15 @@ final class SessionController {
             .sorted { $0.info.name.localizedCaseInsensitiveCompare($1.info.name) == .orderedAscending }
     }
 
+    /// Write the config, unless an unreadable file is still on disk. Refusing
+    /// there is the point of tracking `configError` at all: what is in memory is
+    /// a set of defaults, and saving it would replace a trusted-device list that
+    /// was never actually read with an empty one.
     private func persist() {
+        if let configError {
+            lastError = "\(configError). Nothing was saved."
+            return
+        }
         if !ConfigStore.save(config) {
             lastError = "Could not save this device's settings"
         }
@@ -551,7 +645,7 @@ final class SessionController {
     /// the user copies always has most of its life ahead of it. Called at
     /// launch; a card with under a week left is replaced in place.
     private func renewSelfCardIfNeeded() {
-        guard let nsec = identitySecret, let name = config.myName else { return }
+        guard let nsec = identitySecret, let name = config.myName, let suffix else { return }
         // No card, an unparseable one, or one near expiry all want a fresh mint.
         let info = config.selfCard.flatMap(IdentityCardInfo.parse(card:))
         guard info == nil || info!.needsRenewal else { return }
@@ -603,6 +697,13 @@ final class SessionController {
         guard !stopping else { return } // a transition is already in flight
         lastError = nil
         incomingCard = nil
+        // Only a join has a peer to name. Hosting after a join would otherwise
+        // keep showing "Joining <the last peer>", which is a different session
+        // to a different device. A join re-entered by `reconnect` keeps the
+        // value it was given, hence the role test rather than a blanket clear.
+        if role != .join {
+            joinedPeer = nil
+        }
         lastSession = (role, peerKey, pin, ip)
         // Instant feedback; the runtime's own status events take over once any
         // previous session has wound down off-thread.
@@ -626,6 +727,17 @@ final class SessionController {
             return
         }
         guard let session = lastSession else { return }
+        // A card-setup PIN is not replayable. It rotates every 60 seconds and
+        // only the current and immediately previous one are accepted, so by the
+        // time a failure has been read and Try again pressed, the stored PIN is
+        // very likely dead — and re-dialling it produces a second failure that
+        // looks like the network rather than a stale code. Back to the entry
+        // screen, where the user types the PIN the other device is showing now.
+        if session.role == .cardJoin {
+            lastSession = nil
+            stop()
+            return
+        }
         startSession(
             role: session.role,
             peerKey: session.peerKey,
@@ -678,7 +790,7 @@ final class SessionController {
             // Card setup is identity-less on the wire: the private key and the
             // trusted list have no part in it, and the FFI rejects them outright
             // rather than ignoring them.
-            if role == .cardJoin {
+            if role == .cardJoin, let pin {
                 configJSON["pin"] = pin
                 // Only meaningful on a channel that uses the local network; the
                 // FFI refuses the combination rather than dropping it silently.
@@ -967,7 +1079,15 @@ final class SessionController {
 
         case "error":
             pendingOutbox = nil
-            lastError = object["message"] as? String
+            // Never cleared by an event that carries no readable message. The
+            // closing `idle` reports `lastError` as the reason the session
+            // died, so overwriting a real explanation with nil here would
+            // replace it with the generic "Session ended".
+            if let message = object["message"] as? String, !message.isEmpty {
+                lastError = message
+            } else if lastError == nil {
+                lastError = "The session reported an error"
+            }
 
         default:
             break
