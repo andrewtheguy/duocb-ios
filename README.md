@@ -170,7 +170,9 @@ SPM forbids binary-target paths outside the package root, so the sibling's
   into `build/`, signed with the team and bundle ID from
   `Developer.local.xcconfig`.
 - `scripts/list-devices-ios.sh` / `scripts/run-device-ios.sh` — build, install,
-  and launch on a paired physical device.
+  and launch on a paired physical device. Both run **on the Mac**.
+- `scripts/mac-device.sh` — the same thing driven from this Linux checkout; see
+  [On a real device, from Linux](#on-a-real-device-from-linux).
 - `scripts/render-icons.swift` — regenerate the app icon set + `icon.svg`.
 
 ## End-to-end test against the desktop app
@@ -220,3 +222,37 @@ key from the login keychain, which an ssh session leaves locked. It is in
 ssh does not end on a job that was never going to work; ask for it by name and
 `ci/ci.sh` prints the unlock commands, which need the account password — or run
 it from a GUI session on the Mac instead.
+
+## On a real device, from Linux
+
+`scripts/mac-device.sh` puts the app on a physical iPhone without leaving this
+checkout. It syncs (through `mac-ci.sh`), then **types the build into a tmux
+session on the Mac** rather than running it over ssh, and streams the log back.
+
+```sh
+scripts/mac-device.sh                    # sync, build, install, launch
+scripts/mac-device.sh install            # same, without launching
+scripts/mac-device.sh status             # installed? running?
+scripts/mac-device.sh devices            # what the Mac has paired
+scripts/mac-device.sh doctor             # report on the Mac, change nothing
+scripts/mac-device.sh --device iPad --local
+```
+
+The tmux hop is the whole point: that session belongs to a GUI login, so its
+login keychain is unlocked and codesign can read the signing key — the one
+thing `mac-ci.sh` can never do. Start it once on the Mac with `tmux new -s ios`
+(from Terminal.app, not over ssh, or the keychain is locked there too);
+`doctor` reports whether it is present, idle, and unlocked. A busy pane is
+refused rather than typed into.
+
+Defaults differ from `run-device-ios.sh`'s deliberately: **Release** and the
+**pinned** xcframework, because this is what goes on a phone you actually use,
+and Debug's `-Onone` changes how anything timing-sensitive behaves. `--local`
+switches to `../duocb`'s working tree, building that xcframework on the Mac
+first (`dist/` is excluded from the sync).
+
+The Mac here is not `mac-ci.sh`'s: a VM can build and sign but can never pair
+with hardware, so the default host is `macwork` rather than `macvm` (override
+with `DUOCB_MAC_DEVICE_HOST`). The device defaults to the one named `iPhone`
+and is matched against identifier, UDID or name — ambiguity lists the paired
+devices and stops, rather than guessing onto someone's iPad.

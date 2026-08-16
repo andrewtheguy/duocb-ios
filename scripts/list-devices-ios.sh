@@ -11,17 +11,25 @@ set -euo pipefail
 #                  for anyone driving xcodebuild directly.)
 #
 # Default output is a human table. --tsv emits a stable machine format consumed
-# by run-device-ios.sh; --json passes devicectl's raw JSON straight through.
+# by run-device-ios.sh and scripts/mac-device.sh; --json passes devicectl's raw
+# JSON straight through.
+#
+# The last column, transport, is the one that says whether a device can be
+# reached *now*: 'usb' or 'localNetwork' for one devicectl can see, and
+# 'unavailable' for one that is merely remembered — which is what `devicectl
+# list devices` renders as "unavailable". Pairing state does not answer this,
+# and neither does tunnelState: a perfectly reachable device sits at
+# "disconnected" until a tunnel is actually needed.
 
 usage() {
   cat <<'USAGE'
 Usage:
   scripts/list-devices-ios.sh [options]
 
-Lists paired iOS devices (identifier, udid, name, model, OS, state).
+Lists paired iOS devices (identifier, udid, name, model, OS, state, transport).
 
 Options:
-  --tsv           Machine-readable TSV: identifier<TAB>udid<TAB>platform<TAB>pairingState<TAB>os<TAB>model<TAB>name
+  --tsv           Machine-readable TSV: identifier<TAB>udid<TAB>platform<TAB>pairingState<TAB>os<TAB>model<TAB>name<TAB>transport
   --identifiers   Print only CoreDevice identifiers, one per line.
   --json          Print devicectl's raw JSON unchanged.
   -h, --help      Show this help.
@@ -70,7 +78,8 @@ tsv() {
         (.connectionProperties.pairingState // ""),
         (.deviceProperties.osVersionNumber // ""),
         (.hardwareProperties.marketingName // ""),
-        (.deviceProperties.name // "") ]
+        (.deviceProperties.name // ""),
+        (.connectionProperties.transportType // "unavailable") ]
     | @tsv
   ' "$JSON_FILE"
 }
@@ -91,7 +100,7 @@ case "$MODE" in
     # python3 aligns the columns; feed it the same fixed-order TSV.
     printf '%s\n' "$rows" | /usr/bin/env python3 -c '
 import sys
-cols = ["IDENTIFIER", "UDID", "PLATFORM", "PAIRING", "OS", "MODEL", "NAME"]
+cols = ["IDENTIFIER", "UDID", "PLATFORM", "PAIRING", "OS", "MODEL", "NAME", "TRANSPORT"]
 rows = [line.split("\t") for line in sys.stdin.read().splitlines() if line]
 data = [cols] + rows
 widths = [max(len(r[i]) for r in data) for i in range(len(cols))]
