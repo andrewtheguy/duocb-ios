@@ -82,8 +82,9 @@ struct HubView: View {
             Text("""
                 Give another device this card and it will trust you. Cards last \
                 30 days and renew themselves here, so copy a fresh one if the \
-                other device says yours has expired. The fingerprint is what you \
-                compare when trading cards in person.
+                other device says yours has expired. The fingerprint is this \
+                device's half of the pairing code shown when trading cards, and \
+                it does not change when the card renews.
                 """)
         }
     }
@@ -144,10 +145,10 @@ struct HubView: View {
         } footer: {
             Text("""
                 Trading cards is how two devices come to trust each other: one \
-                shows a PIN, the other types it, and you confirm the same \
-                fingerprint appears on both screens before either card is kept. \
-                It carries no clipboard content and ends as soon as the cards \
-                have crossed.
+                shows a PIN, the other types it, and you check that one pairing \
+                code reads identically on both screens before either card is \
+                kept. It carries no clipboard content and ends as soon as the \
+                cards have crossed.
                 """)
         }
     }

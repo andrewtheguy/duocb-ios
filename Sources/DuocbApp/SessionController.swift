@@ -21,14 +21,14 @@ import Observation
 /// A card that arrives over card setup is verified as well-formed and correctly
 /// signed and nothing more — the PIN is short enough that possession of it must
 /// not be enough to become a trusted device. So `incomingCard` is parked for
-/// the user to compare fingerprints against the other device's screen, and only
-/// `importIncomingCard()` writes it to the trusted list.
+/// the user to check the pairing code matches the other device's screen, and
+/// only `importIncomingCard()` writes it to the trusted list.
 ///
 /// # Persistence commit points
 ///
 /// The private key is saved to the Keychain the moment it is generated or
 /// imported; the device name and the freshly minted self-card the moment the
-/// name is confirmed; a peer's card the moment its fingerprint is confirmed.
+/// name is confirmed; a peer's card the moment its pairing code is confirmed.
 /// Editing a field alone never persists. The permanent suffix is minted once on
 /// first launch and survives an identity reset.
 @Observable @MainActor
@@ -56,7 +56,7 @@ final class SessionController {
         var isHost: Bool { self == .start || self == .cardHost }
     }
 
-    /// A card handed over by card setup, waiting on the user's fingerprint
+    /// A card handed over by card setup, waiting on the user's pairing-code
     /// check. Holding the encoded card alongside the decoded detail means
     /// importing stores exactly the bytes that were verified.
     struct IncomingCard: Equatable {
@@ -123,10 +123,19 @@ final class SessionController {
         return "\(name)_\(suffix)"
     }
 
-    /// This device's key fingerprint — shown on the hub, and the value the
-    /// other device's user compares against during card setup.
+    /// This device's key fingerprint — shown on the hub, and this device's
+    /// half of any card-setup pairing code.
     var ownFingerprint: String? {
         identitySecret.flatMap(Self.identityFingerprint)
+    }
+
+    /// The single pairing code the card-setup confirmation screen shows,
+    /// derived from this device's self-card and the incoming one. Both devices
+    /// render the identical value and the user compares one code across the
+    /// two screens; nil while no card is pending.
+    var incomingPairingCode: String? {
+        guard let own = config.selfCard, let incoming = incomingCard else { return nil }
+        return Self.pairingCode(own, incoming.card)
     }
 
     /// The self-card's decoded detail, for the hub's expiry line.
@@ -214,7 +223,7 @@ final class SessionController {
     #if DEBUG
     /// Text queued by `autostartFromEnvironment`, sent once connected.
     private var autosendText: String?
-    /// Whether to trust a card-setup card without the fingerprint screen.
+    /// Whether to trust a card-setup card without the pairing-code screen.
     private var autoTrustIncoming = false
 
     /// E2E-test hook, **Debug builds only** — the Release archive that ships
@@ -232,7 +241,7 @@ final class SessionController {
     /// | `PIN` | `card_join` only |
     /// | `IP` | `card_join` only: the host's LAN IP for the side channel |
     /// | `CHANNEL` | `lan_then_nostr` \| `lan_only` \| `nostr_only` |
-    /// | `TRUST_INCOMING` | `1` to import a traded card without the fingerprint screen |
+    /// | `TRUST_INCOMING` | `1` to import a traded card without the pairing-code screen |
     /// | `PEER_CARD` | a card to trust up front, so `start`/`join` can run unattended |
     /// | `SEND` | text to send once connected |
     ///
@@ -339,6 +348,19 @@ final class SessionController {
     nonisolated static func identityFingerprint(_ nsec: String) -> String? {
         var buf = [CChar](repeating: 0, count: DuocbBuffer.fingerprint)
         let rc = nsec.withCString { duocb_identity_fingerprint($0, &buf, buf.count) }
+        return rc == 1 ? String(cString: buf) : nil
+    }
+
+    /// The pairing code over two signed cards, order-normalized so both devices
+    /// render the identical value. nil when either card fails verification or
+    /// both carry the same key — a comparison that could only ever "match".
+    nonisolated static func pairingCode(_ cardA: String, _ cardB: String) -> String? {
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.pairingCode)
+        let rc = cardA.withCString { a in
+            cardB.withCString { b in
+                duocb_pairing_code(a, b, &buf, buf.count)
+            }
+        }
         return rc == 1 ? String(cString: buf) : nil
     }
 
@@ -565,11 +587,21 @@ final class SessionController {
         return store(peer)
     }
 
-    /// Trust the card card setup handed over, after the user confirmed its
-    /// fingerprint against the other device. This is the only path that turns a
-    /// verified card into a trusted one.
+    /// Trust the card card setup handed over, after the user checked the
+    /// pairing code matches the other screen. This is the only path that turns
+    /// a verified card into a trusted one.
     func importIncomingCard() {
         guard let incoming = incomingCard, let peer = TrustedPeer(card: incoming.card) else {
+            dismissIncomingCard()
+            return
+        }
+        // A nil pairing code means there was nothing the user could have
+        // compared — the peer sent back this device's own card, or no
+        // self-card exists. Refused here rather than only by the disabled
+        // button, so the DEBUG auto-trust hook can never store a card the
+        // human path would refuse. (An expired card is refused by store().)
+        guard incomingPairingCode != nil else {
+            lastError = "no pairing code could be built for that card, so it was not imported"
             dismissIncomingCard()
             return
         }
@@ -1028,7 +1060,7 @@ final class SessionController {
         case "peer_card_received":
             // Verified as well formed and correctly signed — and nothing more.
             // Parking it here rather than storing it is the whole point: the
-            // PIN is short, so only the user's fingerprint comparison can tell
+            // PIN is short, so only the user's pairing-code comparison can tell
             // this card from an interposer's.
             if let card = object["card"] as? String,
                let infoObject = object["info"] as? [String: Any],
@@ -1036,7 +1068,7 @@ final class SessionController {
                 incomingCard = IncomingCard(card: card, info: info)
                 #if DEBUG
                 // E2E only: skip the screen whose entire job is the human
-                // fingerprint check. Impossible in a shipping build.
+                // pairing-code check. Impossible in a shipping build.
                 if autoTrustIncoming {
                     importIncomingCard()
                 }

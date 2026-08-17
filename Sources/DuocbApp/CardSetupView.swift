@@ -295,9 +295,10 @@ struct CardPairingView: View {
 /// the protocol can prove. A PIN is short and its rendezvous record is
 /// offline-attackable, so possession of the PIN alone must never be enough to
 /// become trusted; an interposer who has it would reach exactly this screen.
-/// What catches them is the fingerprint: it is taken over the peer's public
-/// key, and the same value is displayed on the real device, so a mismatch is
-/// the tell.
+/// What catches them is the pairing code: one value built from both devices'
+/// keys, rendered identically on the two screens, so an interposed card makes
+/// them disagree. Each half is one key's fingerprint, computed locally — the
+/// code never crosses the network.
 struct CardConfirmView: View {
     @Environment(SessionController.self) private var controller
 
@@ -305,55 +306,57 @@ struct CardConfirmView: View {
         List {
             if let incoming = controller.incomingCard {
                 Section {
-                    LabeledContent("Device") {
+                    if let code = controller.incomingPairingCode {
+                        FingerprintText(fingerprint: code)
+                    }
+                    if let own = controller.displayIdentity {
+                        LabeledContent("This device") {
+                            Text(own)
+                                .font(.system(.callout, design: .monospaced))
+                        }
+                    }
+                    LabeledContent("Incoming card") {
                         Text(incoming.info.name)
                             .font(.system(.callout, design: .monospaced))
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Their fingerprint")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        FingerprintText(fingerprint: incoming.info.fingerprint)
                     }
                     Text(incoming.info.expiryText)
                         .font(.caption)
                         .foregroundStyle(incoming.info.expired ? .orange : .secondary)
                 } header: {
-                    Text("Confirm this device")
+                    Text("Pairing code")
                 } footer: {
                     Text("""
-                        Check that this fingerprint is exactly what the other \
-                        device shows for itself. If it differs — even slightly — \
-                        something is intercepting the pairing; cancel.
+                        Both devices now show a pairing code built from both \
+                        keys. The code above must be identical on the two \
+                        screens. If it differs anywhere, cancel — something \
+                        else answered your PIN.
                         """)
-                }
-
-                if let own = controller.ownFingerprint {
-                    Section {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Your fingerprint")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                            FingerprintText(fingerprint: own)
-                        }
-                    } footer: {
-                        Text("The other device is showing this value for you; it should match there.")
-                    }
                 }
 
                 Section {
                     Button {
                         controller.importIncomingCard()
                     } label: {
-                        Label("Fingerprints match — trust this device", systemImage: "checkmark.shield")
+                        Label("Codes match — trust this device", systemImage: "checkmark.shield")
                     }
+                    // No code (an echo of this device's own card) means there
+                    // is nothing to have compared, and an expired card could
+                    // never be stored — in either case there is nothing to
+                    // trust.
+                    .disabled(controller.incomingPairingCode == nil || incoming.info.expired)
                     Button("Cancel", role: .destructive) {
                         controller.dismissIncomingCard()
                     }
+                } footer: {
+                    Text("""
+                        Importing adds this device to the trusted list. Do the \
+                        same on the other device, then use Start and Join on \
+                        the home screen to share the clipboard.
+                        """)
                 }
             }
         }
-        .navigationTitle("Confirm")
+        .navigationTitle("Check the pairing code")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
