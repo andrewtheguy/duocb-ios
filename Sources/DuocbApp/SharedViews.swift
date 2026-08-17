@@ -153,19 +153,21 @@ struct CopyButton: View {
     }
 }
 
-/// A fingerprint, rendered for eye-comparison across two screens.
+/// A fingerprint or pairing code, rendered for eye-comparison across two
+/// screens.
 ///
 /// The layout is fixed rather than fitted, and that is the whole point: the
 /// comparison this supports is "do these two screens show the same thing", and
 /// a phone and a laptop — or two phones at different Dynamic Type settings —
-/// would wrap free-flowing text at different groups, so the same fingerprint
-/// would read as two different shapes. Instead the groups are laid out
+/// would wrap free-flowing text at different groups, so the same value would
+/// read as two different shapes. Instead the groups are laid out
 /// `groupsPerLine` at a time, identically everywhere, and a narrow screen
 /// shrinks the glyphs instead of re-wrapping them.
 struct FingerprintText: View {
     let fingerprint: String
-    /// Five 4-hex-digit groups is the core's whole fingerprint (10 bytes, see
-    /// `key_fingerprint`), so this normally puts it on one line.
+    /// Five 4-hex-digit groups is one key's whole fingerprint (10 bytes, see
+    /// `key_fingerprint`), so a fingerprint takes one line and the pairing
+    /// code — two fingerprints laid end to end — takes two, one per key.
     var groupsPerLine = 5
 
     private var lines: [String] {

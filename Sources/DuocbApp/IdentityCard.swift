@@ -10,6 +10,7 @@ enum DuocbBuffer {
     static let name = 64
     static let publicKey = 128
     static let fingerprint = 64
+    static let pairingCode = 128
     static let pin = 16
     static let card = 4096
     static let cardInfo = 1024
@@ -28,8 +29,9 @@ enum DuocbBuffer {
 /// Everything here is public by design — a card is the token you hand another
 /// device so it will trust you, and it holds no private key. The one field that
 /// carries weight is `fingerprint`: it is taken over the public key rather than
-/// the card, so it survives a re-mint, and comparing it across two screens is
-/// what a human check during card setup actually consists of.
+/// the card, so it survives a re-mint. It is this card's half of the card-setup
+/// pairing code, and the value a trusted-device row shows for out-of-band
+/// re-checks.
 struct IdentityCardInfo: Equatable {
     /// The full display identity, e.g. "mac-book_a7B2c3D4".
     let name: String

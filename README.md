@@ -7,11 +7,12 @@ Every device holds **its own application keypair** and a signed identity card
 naming `<short-name>_<permanent-suffix>` — there is no shared secret to copy
 between devices. Two devices come to trust each other by **trading cards**: one
 shows a short rotating PIN, the other types it, and the PIN-authenticated
-connection carries the two cards across. Both screens then show the same key
-**fingerprint**, and neither card is stored until you confirm they match. That
-human check is the point — a PIN is short, so possession of it alone must never
-be enough to become a trusted device. Card setup carries no clipboard content
-and ends as soon as the cards have crossed.
+connection carries the two cards across. Both screens then show one **pairing
+code** built from both devices' keys, and neither card is stored until you
+confirm the two screens display the identical code. That human check is the
+point — a PIN is short, so possession of it alone must never be enough to
+become a trusted device. Card setup carries no clipboard content and ends as
+soon as the cards have crossed.
 
 Once two devices trust each other, press **Start a connection** on one and
 **Join** on the other, then pick it from the trusted-device list. The join
@@ -20,7 +21,8 @@ retries for a short while, so press Start first if it is not hosting yet.
 Cards expire 30 days after they are minted. This device's own card renews
 itself; a peer's card that lapses can no longer pair and shows in warning
 colour until that device hands over a fresh one. You can also paste a card
-directly, which is the same trust decision with the same fingerprint check.
+directly, which is the same trust decision checked against the fingerprint on
+its trusted-device row.
 
 A **channel** setting picks how the two devices find each other. It governs
 card setup and clipboard sessions alike, so **both devices must be set to a
@@ -187,8 +189,8 @@ cd ../duocb && cargo run -p duocb -- --config /tmp/duocb-desktop.json
 
 Set up both sides (desktop: generate an identity, name it `mac`; app: the same,
 named `phone`), then choose **Trade cards** on both — show the PIN on one, type
-it on the other, and confirm the fingerprint each screen displays matches the
-other device's before importing. After that press Start on the desktop, choose
+it on the other, and confirm the pairing code reads identically on the two
+screens before importing. After that press Start on the desktop, choose
 Join in the app and tap the `mac_…` row; send text both ways and compare the
 CRC readouts.
 
