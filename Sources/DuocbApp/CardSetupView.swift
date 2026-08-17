@@ -339,6 +339,11 @@ struct CardConfirmView: View {
                     } label: {
                         Label("Codes match — trust this device", systemImage: "checkmark.shield")
                     }
+                    // No code (an echo of this device's own card) means there
+                    // is nothing to have compared, and an expired card could
+                    // never be stored — in either case there is nothing to
+                    // trust.
+                    .disabled(controller.incomingPairingCode == nil || incoming.info.expired)
                     Button("Cancel", role: .destructive) {
                         controller.dismissIncomingCard()
                     }

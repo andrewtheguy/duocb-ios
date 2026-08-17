@@ -595,6 +595,16 @@ final class SessionController {
             dismissIncomingCard()
             return
         }
+        // A nil pairing code means there was nothing the user could have
+        // compared — the peer sent back this device's own card, or no
+        // self-card exists. Refused here rather than only by the disabled
+        // button, so the DEBUG auto-trust hook can never store a card the
+        // human path would refuse. (An expired card is refused by store().)
+        guard incomingPairingCode != nil else {
+            lastError = "no pairing code could be built for that card, so it was not imported"
+            dismissIncomingCard()
+            return
+        }
         if let error = store(peer) {
             lastError = error
         }
