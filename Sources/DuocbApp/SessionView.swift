@@ -1,7 +1,8 @@
 import SwiftUI
 import UIKit
 
-/// The live session: status, identity fingerprint, sending, and the inbox.
+/// The live clipboard session: status, sending, and the inbox.
+///
 /// Received text is never auto-revealed or auto-copied — each item shows only
 /// size + CRC + time until the user peeks, and reaches the clipboard only via
 /// an explicit Copy (matching the desktop model).
@@ -13,7 +14,6 @@ struct SessionView: View {
 
     var body: some View {
         List {
-            pinSection
             statusSection
             if let error = controller.lastError {
                 Section {
@@ -25,7 +25,11 @@ struct SessionView: View {
             sendSection
             if let outbox = controller.outbox {
                 Section("Last sent") {
-                    itemSummary(outbox)
+                    HStack {
+                        itemSummary(outbox)
+                        Spacer()
+                        CopyButton(value: outbox.text)
+                    }
                 }
             }
             inboxSection
@@ -54,61 +58,17 @@ struct SessionView: View {
 
     // MARK: - Sections
 
-    /// Quick host: the rotating PIN, front and center until a peer pairs
-    /// (the runtime then sends pin_cleared and this section disappears).
-    @ViewBuilder
-    private var pinSection: some View {
-        if let pin = controller.pinDisplay {
-            Section {
-                VStack(spacing: 8) {
-                    Text(pin)
-                        .font(.system(size: 44, weight: .semibold, design: .monospaced))
-                        .textSelection(.enabled)
-                    if let deadline = controller.pinDeadline {
-                        TimelineView(.periodic(from: .now, by: 1)) { context in
-                            let secs = max(0, Int(deadline.timeIntervalSince(context.date).rounded()))
-                            Text("renews in \(secs)s")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    // LAN-only channel: if the other device can't find this one
-                    // automatically, the joiner can type this IP.
-                    if let ip = controller.hostLanIP {
-                        Text("Local IP: \(ip)")
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                CopySecretButton(secret: pin, title: "Copy PIN")
-                Button {
-                    controller.refreshPIN()
-                } label: {
-                    Label("New PIN", systemImage: "arrow.clockwise")
-                }
-            } header: {
-                Text("PIN")
-            } footer: {
-                Text(controller.hostLanIP == nil
-                    ? "Enter this PIN on the other device to pair. Automatic renewal keeps only the current and immediately previous PIN valid. New PIN replaces it right away and stops every earlier one from working."
-                    : "Enter this PIN on the other device to pair. If it isn't found automatically, also type the local IP shown above. Automatic renewal keeps only the current and immediately previous PIN valid. New PIN replaces it right away and stops every earlier one from working.")
-            }
-        }
-    }
-
     private var statusSection: some View {
         Section("Status") {
             HStack {
                 Circle()
                     .fill(controller.phase == .connected ? .green : .orange)
                     .frame(width: 10, height: 10)
-                Text(statusText)
+                Text(controller.phase.statusText)
             }
             // A failed session is parked, not stopped: the runtime keeps the
             // pairing identity, so reconnecting resumes with the same node id
-            // and the peer accepts it without a new PIN.
+            // and the peer accepts it without re-pairing.
             if case .failed = controller.phase {
                 Button {
                     controller.reconnect()
@@ -116,18 +76,9 @@ struct SessionView: View {
                     Label("Reconnect", systemImage: "arrow.clockwise")
                 }
             }
-            // Quick sessions are identity-less; the broadcast identity only
-            // applies to configure-mode sessions. In quick mode, show this
-            // device's own truncated iroh id instead so the connected screen
-            // always identifies both ends by node id.
-            if !controller.isQuickSession, let identity = controller.displayIdentity {
+            if let identity = controller.displayIdentity {
                 LabeledContent("This device") {
                     Text(identity).font(.system(.footnote, design: .monospaced))
-                }
-            }
-            if controller.isQuickSession, let ownID = controller.nodeID {
-                LabeledContent("This device") {
-                    Text(shortNodeID(ownID)).font(.system(.footnote, design: .monospaced))
                 }
             }
             if let joined = controller.joinedPeer {
@@ -135,16 +86,12 @@ struct SessionView: View {
                     Text(joined).font(.system(.footnote, design: .monospaced))
                 }
             }
-            if let fingerprint = controller.tokenFingerprint {
-                LabeledContent("Fingerprint") {
-                    Text(fingerprint).font(.system(.footnote, design: .monospaced))
-                }
-            }
             if let peer = controller.peerNodeID {
                 LabeledContent("Peer") {
                     Text(shortNodeID(peer)).font(.system(.footnote, design: .monospaced))
                 }
             }
+            ChannelBadge(channel: controller.channel)
         }
     }
 
@@ -179,7 +126,7 @@ struct SessionView: View {
     }
 
     private var inboxSection: some View {
-        Section("Received") {
+        Section {
             if controller.inbox.isEmpty {
                 Text("Nothing received yet")
                     .foregroundStyle(.secondary)
@@ -194,7 +141,7 @@ struct SessionView: View {
                             controller.togglePeek(item.id)
                         }
                         .buttonStyle(.borderless)
-                        CopyTextButton(text: item.text)
+                        CopyButton(value: item.text)
                     }
                     if item.expanded {
                         Text(item.peekText)
@@ -204,6 +151,18 @@ struct SessionView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
                     }
+                }
+            }
+        } header: {
+            HStack {
+                Text(controller.inbox.isEmpty
+                    ? "Received"
+                    : "Received (\(controller.inbox.count))")
+                Spacer()
+                if !controller.inbox.isEmpty {
+                    Button("Clear") { controller.clearInbox() }
+                        .buttonStyle(.borderless)
+                        .textCase(nil)
                 }
             }
         }
@@ -219,49 +178,7 @@ struct SessionView: View {
         }
     }
 
-    // MARK: - Display helpers
-
-    /// Phase → user copy, mirroring the desktop's status_text().
-    private var statusText: String {
-        switch controller.phase {
-        case .idle: "Idle"
-        case .starting: "Starting…"
-        case .listening: "Waiting for the other device…"
-        case .resolving: "Looking up the peer…"
-        case .connecting: "Connecting…"
-        case .authenticating: "Authenticating…"
-        case .connected: "Connected"
-        case .reconnecting(let attempt, let max): "Reconnecting… (attempt \(attempt) of \(max))"
-        case .failed(let message): "Failed: \(message)"
-        }
-    }
-
     private func shortNodeID(_ id: String) -> String {
         id.count > 16 ? "\(id.prefix(8))…\(id.suffix(8))" : id
-    }
-}
-
-/// A "Copy" button that acknowledges the tap: it reads "✔ Copied" for a couple
-/// of seconds after copying arbitrary text to the pasteboard (the received
-/// clipboard items — unlike the secret, these are ordinary clipboard content).
-struct CopyTextButton: View {
-    let text: String
-    @State private var copied = false
-    @State private var resetTask: Task<Void, Never>?
-
-    var body: some View {
-        Button(copied ? "✔ Copied" : "Copy") {
-            UIPasteboard.general.string = text
-            copied = true
-            // Cancel the previous reset so the latest tap owns the timer —
-            // otherwise an earlier tap's timer clears the acknowledgement
-            // before this tap's two seconds are up.
-            resetTask?.cancel()
-            resetTask = Task {
-                try? await Task.sleep(for: .seconds(2))
-                if !Task.isCancelled { copied = false }
-            }
-        }
-        .buttonStyle(.borderless)
     }
 }

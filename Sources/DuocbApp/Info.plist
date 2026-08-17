@@ -44,17 +44,25 @@
 	     the background; the core's reconnect loop recovers on return to
 	     foreground. No ATS exception either: nostr relays are wss:// and the
 	     iroh QUIC/UDP transport is not ATS-governed. -->
-	<!-- Quick pair's LAN-only channel registers/resolves the PIN rendezvous
-	     as a Bonjour service through the system mDNSResponder daemon (no
-	     multicast entitlement involved). Browsing/resolving requires the
-	     service type listed under NSBonjourServices and triggers the Local
-	     Network permission prompt on first use; the default channel carries
-	     the rendezvous over nostr relays instead. -->
+	<!-- The local-network rendezvous is registered and resolved through the
+	     system mDNSResponder daemon (Bonjour), which performs the multicast on
+	     the app's behalf — so no multicast entitlement is involved. Browsing
+	     requires the service type to be listed here and triggers the Local
+	     Network permission prompt on first use.
+
+	     BOTH types are load-bearing, and dropping either fails silently: the
+	     app still compiles, links and launches, and the LAN lookup simply never
+	     resolves, which reads like a network problem.
+	       _duocb-pin._udp   the card-setup PIN rendezvous (trading cards)
+	       _duocb-host._udp  the pairwise hosting record a clipboard session is
+	                         found through — LAN-first, with nostr as fallback
+	     ci/ci.sh's `unsigned` job asserts both are present in the built app. -->
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>duocb uses the local network to find your other device when quick pairing and to connect devices directly.</string>
+	<string>duocb uses the local network to find your other device when trading cards and when sharing the clipboard, and to connect the two devices directly.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_duocb-pin._udp</string>
+		<string>_duocb-host._udp</string>
 	</array>
 </dict>
 </plist>

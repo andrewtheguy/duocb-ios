@@ -71,11 +71,36 @@ jobs:
             exit 1
           fi
 
-          if [[ "$(plutil -extract NSBonjourServices.0 raw -o - \
-            "$app_path/Info.plist")" != "_duocb-pin._udp" ]]; then
-            echo "::error::The archived app lost its Bonjour service declaration"
+          # Both types matter and both fail silently if dropped:
+          # _duocb-pin._udp carries card setup, _duocb-host._udp carries the
+          # clipboard session's LAN-first hosting record. An app that can trade
+          # cards but never find a session is exactly what losing the second
+          # one produces.
+          #
+          # Read entry by entry and compared whole: a substring test over the
+          # raw JSON would accept `_duocb-pin._udp2`, and Bonjour matches the
+          # service type exactly.
+          services=()
+          i=0
+          while entry="$(plutil -extract "NSBonjourServices.$i" raw -o - \
+            "$app_path/Info.plist" 2>/dev/null)"; do
+            services+=("$entry")
+            i=$((i + 1))
+          done
+          if [[ ${#services[@]} -eq 0 ]]; then
+            echo "::error::The archived app declares no Bonjour services at all"
             exit 1
           fi
+          for service in _duocb-pin._udp _duocb-host._udp; do
+            found=false
+            for entry in "${services[@]}"; do
+              [[ "$entry" == "$service" ]] && found=true
+            done
+            if ! $found; then
+              echo "::error::The archived app does not declare the $service Bonjour service"
+              exit 1
+            fi
+          done
 
           mkdir -p "$artifact_dir" "$package_root/Payload"
           ditto --norsrc --noextattr --noqtn --noacl \
