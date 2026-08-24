@@ -18,8 +18,8 @@ Once two devices trust each other, press **Start a connection** on one and
 **Join** on the other, then pick it from the trusted-device list. The join
 retries for a short while, so press Start first if it is not hosting yet.
 
-Cards expire 30 days after they are minted. This device's own card renews
-itself; a peer's card that lapses can no longer pair and shows in warning
+Cards expire 30 days after they are minted; the private key that signs them
+never does. This device's own card renews itself with that same key; a peer's card that lapses can no longer pair and shows in warning
 colour until that device hands over a fresh one. You can also paste a card
 directly, which is the same trust decision checked against the fingerprint on
 its trusted-device row.
