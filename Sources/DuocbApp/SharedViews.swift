@@ -25,7 +25,7 @@ extension SessionController.Phase {
         switch self {
         case .idle: "Idle"
         case .starting: "Starting…"
-        case .listening: "Waiting for the other device…"
+        case .waiting: "Waiting for the other device…"
         case .resolving: "Looking for the other device…"
         case .connecting: "Connecting…"
         case .authenticating: "Authenticating…"

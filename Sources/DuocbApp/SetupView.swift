@@ -3,7 +3,7 @@ import UIKit
 
 /// The home flow, mirroring the desktop wizard + hub: set up this
 /// installation's application identity (generate a keypair or restore one),
-/// name this device, then the hub — identity, trusted devices, host/join.
+/// name this device, then the hub — identity, trusted devices, connect.
 struct SetupView: View {
     /// Where the flow is, matching the desktop's `ConfigureStep` plus the two
     /// screens iOS reaches from the hub rather than a menu.
@@ -12,8 +12,8 @@ struct SetupView: View {
         case importIdentity
         case name
         case hub
-        /// The trusted-device picker, shown only after choosing Join.
-        case join
+        /// The trusted-device picker, shown only after choosing Connect.
+        case connect
         /// Card setup's entry screen: show a PIN, or type one.
         case cardSetup
         case settings
@@ -34,8 +34,8 @@ struct SetupView: View {
                 NameDeviceView(step: stepBinding)
             case .hub:
                 HubView(step: stepBinding)
-            case .join:
-                JoinPickerView(step: stepBinding)
+            case .connect:
+                ConnectPickerView(step: stepBinding)
             case .cardSetup:
                 CardSetupView(step: stepBinding)
             case .settings:
@@ -253,8 +253,8 @@ private struct NameDeviceView: View {
             Section {
                 // Advance only once the name *and* the card it mints are
                 // committed; a name with no card is an identity that cannot
-                // host, join or be trusted, so the hub behind this would be
-                // one where every action fails.
+                // connect or be trusted, so the hub behind this would be one
+                // where every action fails.
                 Button(controller.selfCard == nil ? "Save name" : "Rename and re-issue card") {
                     if controller.saveName(trimmed) {
                         step = .hub

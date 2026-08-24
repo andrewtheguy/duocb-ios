@@ -126,7 +126,7 @@ struct IdentityCardInfo: Equatable {
 
 /// One row of the trusted-device list: a peer's stored signed card plus its
 /// decoded detail. Identified by public key, which is what trust is keyed on
-/// and what a join names.
+/// and what a session names.
 struct TrustedPeer: Identifiable, Equatable {
     /// The signed card as stored, handed back to the FFI verbatim.
     let card: String
