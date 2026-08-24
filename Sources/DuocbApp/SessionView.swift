@@ -58,11 +58,22 @@ struct SessionView: View {
 
     // MARK: - Sections
 
+    /// Green while connected, red once the session gave up, orange for every
+    /// transient in between (desktop parity: the reconnect states stay on this
+    /// screen with the inbox and outbox in place).
+    private var statusColor: Color {
+        switch controller.phase {
+        case .connected: .green
+        case .failed: .red
+        default: .orange
+        }
+    }
+
     private var statusSection: some View {
         Section("Status") {
             HStack {
                 Circle()
-                    .fill(controller.phase == .connected ? .green : .orange)
+                    .fill(statusColor)
                     .frame(width: 10, height: 10)
                 Text(controller.phase.statusText)
             }
@@ -73,7 +84,7 @@ struct SessionView: View {
                 Button {
                     controller.reconnect()
                 } label: {
-                    Label("Reconnect", systemImage: "arrow.clockwise")
+                    Label("Retry", systemImage: "arrow.clockwise")
                 }
             }
             if let identity = controller.displayIdentity {
