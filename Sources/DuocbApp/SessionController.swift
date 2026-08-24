@@ -4,17 +4,28 @@ import Observation
 /// Central view model: owns the Rust FFI handle, polls its event queue on a
 /// timer, and mirrors the desktop app's state machine.
 ///
-/// # One handle, four roles, and a hub that runs nothing
+/// # One handle, three roles, and a hub that runs nothing
 ///
 /// The hub is **pure local state**. The trusted-device list is read from this
 /// app's own storage; nothing is broadcast and nothing is discovered, so no
 /// runtime instance exists while the hub is on screen. A handle is created only
 /// for a session, and there is at most one at a time:
 ///
-/// - `start` / `join` — a clipboard session between two devices that already
-///   trust each other's cards;
+/// - `connect` — a clipboard session with one device that already trusts this
+///   one's card, and whose card this one holds;
 /// - `cardHost` / `cardJoin` — **card setup**, a short-lived session that
 ///   exists only to swap identity cards and never carries clipboard content.
+///
+/// # Nobody picks a role
+///
+/// A clipboard session still has a listening half and a dialing half, but the
+/// user is never asked which one this device runs: they pick the *device* they
+/// want to share with, and so does the person on the other one. The core
+/// decides the split from the two application keys (`duocb_session_role`), so
+/// the two devices always reach opposite answers with nothing exchanged — and
+/// it does not matter which of them is ready first, because both halves simply
+/// wait for the other to turn up. `sessionHosting` is that answer, kept only so
+/// the session screen can say which device is setting the link up.
 ///
 /// # Trust is imported, never inferred
 ///
@@ -36,7 +47,9 @@ final class SessionController {
     enum Phase: Equatable {
         case idle
         case starting
-        case listening
+        /// Ready, and the other device is not here yet. Both halves report it:
+        /// listening for the dial, or not having found the peer's record.
+        case waiting
         case resolving
         case connecting
         case authenticating
@@ -46,14 +59,14 @@ final class SessionController {
     }
 
     enum Role: String {
-        case start, join
+        /// Share the clipboard with one chosen trusted device. It names the
+        /// device, not a half of the connection — see `sessionHosting`.
+        case connect
         case cardHost = "card_host"
         case cardJoin = "card_join"
 
         /// Card setup never carries clipboard traffic; it trades cards and ends.
         var isCardSetup: Bool { self == .cardHost || self == .cardJoin }
-        /// Hosts show a PIN or listen; joiners dial.
-        var isHost: Bool { self == .start || self == .cardHost }
     }
 
     /// A card handed over by card setup, waiting on the user's pairing-code
@@ -69,8 +82,12 @@ final class SessionController {
     private(set) var phase: Phase = .idle
     private(set) var nodeID: String?
     private(set) var peerNodeID: String?
-    /// Join role: the display identity of the device being joined.
-    private(set) var joinedPeer: String?
+    /// The display identity of the device this session is with.
+    private(set) var sessionPeer: String?
+    /// Whether this device drew the hosting half of the running session: the
+    /// core's answer for a clipboard session, and "shows the PIN" for card
+    /// setup. Information for the session screen, never a choice.
+    private(set) var sessionHosting = false
     /// Non-nil while the connection-path sheet is up; refreshed by queryConnPath.
     var connPaths: [ConnPath]?
     /// Card host: the current PIN ("XXXX-XXXX"), until a peer pairs.
@@ -191,7 +208,18 @@ final class SessionController {
     var isCardSetupActive: Bool { activeRole?.isCardSetup == true }
     /// A clipboard session is on screen.
     var isClipboardSessionActive: Bool { activeRole.map { !$0.isCardSetup } ?? false }
-    var isHostingRole: Bool { activeRole?.isHost ?? false }
+
+    /// One line naming which device is setting the clipboard link up, or nil
+    /// when that is not what is on screen. Said quietly and never as a control:
+    /// the user picked a device, and this only explains what the status line is
+    /// waiting for.
+    var sessionRoleNote: String? {
+        guard isClipboardSessionActive else { return nil }
+        let peer = sessionPeer ?? "the other device"
+        return sessionHosting
+            ? "This device is hosting the link; \(peer) connects to it."
+            : "\(peer) is hosting the link; this device connects to it."
+    }
 
     init() {
         duocb_init_logging()
@@ -236,13 +264,13 @@ final class SessionController {
     /// | --- | --- |
     /// | `NSEC` | this device's private key; omitted mints a fresh one |
     /// | `NAME` | short device name, default "phone" |
-    /// | `ROLE` | `start` \| `join` \| `card_host` \| `card_join`; omit to stop at the hub |
-    /// | `PEER` | `join` only: the trusted peer's hex public key |
+    /// | `ROLE` | `connect` \| `card_host` \| `card_join`; omit to stop at the hub |
+    /// | `PEER` | `connect` only: the trusted peer's hex public key |
     /// | `PIN` | `card_join` only |
     /// | `IP` | `card_join` only: the host's LAN IP for the side channel |
     /// | `CHANNEL` | `lan_then_nostr` \| `lan_only` \| `nostr_only` |
     /// | `TRUST_INCOMING` | `1` to import a traded card without the pairing-code screen |
-    /// | `PEER_CARD` | a card to trust up front, so `start`/`join` can run unattended |
+    /// | `PEER_CARD` | a card to trust up front, so `connect` can run unattended |
     /// | `SEND` | text to send once connected |
     ///
     /// `TRUST_INCOMING` deliberately bypasses the human check that card setup
@@ -298,12 +326,10 @@ final class SessionController {
               displayIdentity ?? "?", peers.count, role ?? "")
 
         switch env["DUOCB_AUTOSTART_ROLE"] {
-        case "start":
-            startHosting()
-        case "join":
+        case "connect":
             if let key = env["DUOCB_AUTOSTART_PEER"],
                let peer = peers.first(where: { $0.id == key }) {
-                join(peer: peer)
+                connect(peer: peer)
             }
         case "card_host":
             startCardHost()
@@ -525,7 +551,7 @@ final class SessionController {
     ///
     /// Returns whether the name was committed. The name and the card go in
     /// together or not at all: a name with no card is an identity that cannot
-    /// host, join or be trusted, and the naming screen would have moved on to a
+    /// connect or be trusted, and the naming screen would have moved on to a
     /// hub whose every action fails.
     @discardableResult
     func saveName(_ name: String) -> Bool {
@@ -634,7 +660,7 @@ final class SessionController {
     /// (desktop parity: `store_peer_card` in app/mod.rs).
     private func store(_ peer: TrustedPeer) -> String? {
         // Storing a lapsed card would record trust that can never pair, so it
-        // is refused here rather than at the first Join. Cards already in the
+        // is refused here rather than at the first Connect. Cards already in the
         // list are a different question — those stay, in warning colour, so
         // they remain visible and removable.
         if peer.info.expired {
@@ -690,19 +716,30 @@ final class SessionController {
 
     // MARK: - Session lifecycle
 
-    /// Host a clipboard session; a trusted device joins by picking this one.
-    func startHosting() {
-        startSession(role: .start, peerKey: nil)
+    /// Share the clipboard with one trusted device. The person on that device
+    /// runs this same action for this one; which of the two listens is decided
+    /// from the two keys, not here, so neither side has to go first.
+    func connect(peer: TrustedPeer) {
+        sessionPeer = peer.info.name
+        sessionHosting = hosts(peer: peer)
+        startSession(role: .connect, peerKey: peer.id)
     }
 
-    /// Dial one trusted peer.
-    func join(peer: TrustedPeer) {
-        joinedPeer = peer.info.name
-        startSession(role: .join, peerKey: peer.id)
+    /// Whether this device would run the hosting half with `peer`. The same
+    /// rule `duocb_start` applies to the config it is handed, asked ahead of
+    /// time so the screen can say which device sets the link up.
+    private func hosts(peer: TrustedPeer) -> Bool {
+        guard let selfCard else { return false }
+        return selfCard.withCString { mine in
+            peer.card.withCString { theirs in
+                duocb_session_role(mine, theirs) == 1
+            }
+        }
     }
 
     /// Card setup: show a rotating PIN on this device and trade cards.
     func startCardHost() {
+        sessionHosting = true
         startSession(role: .cardHost, peerKey: nil)
     }
 
@@ -712,6 +749,7 @@ final class SessionController {
     /// browses DNS-SD.
     func joinCardSetup(pin canonical: String, ip: String? = nil) {
         let ip = ip?.trimmingCharacters(in: .whitespaces)
+        sessionHosting = false
         startSession(
             role: .cardJoin,
             peerKey: nil,
@@ -729,18 +767,19 @@ final class SessionController {
         guard !stopping else { return } // a transition is already in flight
         lastError = nil
         incomingCard = nil
-        // Only a join has a peer to name. Hosting after a join would otherwise
-        // keep showing "Joining <the last peer>", which is a different session
-        // to a different device. A join re-entered by `reconnect` keeps the
-        // value it was given, hence the role test rather than a blanket clear.
-        if role != .join {
-            joinedPeer = nil
+        // Only a clipboard session has a peer to name. Card setup after one
+        // would otherwise keep showing the last device connected to, which has
+        // nothing to do with the PIN on screen. A session re-entered by
+        // `reconnect` keeps the value it was given, hence the role test rather
+        // than a blanket clear.
+        if role != .connect {
+            sessionPeer = nil
         }
         lastSession = (role, peerKey, pin, ip)
         // Instant feedback; the runtime's own status events take over once any
         // previous session has wound down off-thread.
         phase = .starting
-        teardown(clearJoinedPeer: false) { [weak self] in
+        teardown(clearSessionPeer: false) { [weak self] in
             guard let self else { return }
             _ = self.startRuntime(role: role, peerKey: peerKey, pin: pin, ip: ip)
         }
@@ -872,8 +911,8 @@ final class SessionController {
     /// Release the current instance and run `next` once it has actually shut
     /// down. `duocb_stop` performs a graceful runtime shutdown — normally fast,
     /// but up to a few seconds with a live session — so it runs off the main
-    /// thread; blocking here is what would make Start/Join/Stop feel frozen.
-    private func teardown(clearJoinedPeer: Bool = true, then next: @escaping () -> Void) {
+    /// thread; blocking here is what would make Connect/Stop feel frozen.
+    private func teardown(clearSessionPeer: Bool = true, then next: @escaping () -> Void) {
         pollTimer?.invalidate()
         pollTimer = nil
         currentRole = nil
@@ -884,8 +923,8 @@ final class SessionController {
         hostLanIP = nil
         connPaths = nil
         pendingOutbox = nil
-        if clearJoinedPeer {
-            joinedPeer = nil
+        if clearSessionPeer {
+            sessionPeer = nil
         }
         guard let handle else {
             next()
@@ -915,7 +954,7 @@ final class SessionController {
             phase = .failed(message)
         } else {
             phase = .failed(message)
-            teardown(clearJoinedPeer: false) {}
+            teardown(clearSessionPeer: false) {}
         }
     }
 
@@ -1018,7 +1057,7 @@ final class SessionController {
         case "status":
             switch object["state"] as? String {
             case "starting": phase = .starting
-            case "listening": phase = .listening
+            case "waiting": phase = .waiting
             case "resolving": phase = .resolving
             case "connecting": phase = .connecting
             case "authenticating": phase = .authenticating

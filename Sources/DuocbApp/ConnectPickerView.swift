@@ -2,12 +2,13 @@ import SwiftUI
 import UIKit
 
 /// The trusted-device picker: every device whose card this one holds. Tap one
-/// to join the session it is hosting.
+/// to connect to it — the person on that device taps this one, and the core
+/// works out which of the two listens.
 ///
 /// The list is purely local — these are stored cards, not discovered devices —
-/// so there is no refresh, no "last seen", and no online/offline verdict. The
-/// dial is the liveness check, exactly as on the desktop.
-struct JoinPickerView: View {
+/// so there is no refresh, no "last seen", and no online/offline verdict.
+/// Starting the session is the liveness check, exactly as on the desktop.
+struct ConnectPickerView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: SetupView.Step
 
@@ -63,10 +64,19 @@ struct JoinPickerView: View {
             }
             ForEach(controller.peers) { peer in
                 Button {
-                    controller.join(peer: peer)
+                    controller.connect(peer: peer)
                 } label: {
                     peerRow(peer)
                 }
+                // A lapsed card cannot pair either way round, and the hosting
+                // half fails silently at that — it simply publishes no record,
+                // which reads as a peer that never turned up. The row says the
+                // date and the footer says the remedy; tapping it would only
+                // start a session that can never connect.
+                .disabled(peer.info.expired)
+                // Applied outside the disable so stopping trusting an expired
+                // device — the one thing still worth doing to that row — stays
+                // available.
                 .swipeActions(edge: .trailing) {
                     Button("Remove", role: .destructive) { pendingRemoval = peer }
                 }
@@ -75,9 +85,10 @@ struct JoinPickerView: View {
             Text("Trusted devices")
         } footer: {
             Text("""
-                Tap a device to join the connection it is hosting. Swipe a row to \
-                stop trusting it. An expired card can no longer pair — ask that \
-                device for a fresh one, or trade cards again.
+                Tap a device to connect to it, and tap this one over there — the \
+                order does not matter, and whoever is ready first waits. Swipe a \
+                row to stop trusting it. An expired card can no longer pair — ask \
+                that device for a fresh one, or trade cards again.
                 """)
         }
     }
@@ -95,7 +106,7 @@ struct JoinPickerView: View {
                     .foregroundStyle(peer.info.expired ? .orange : .secondary)
             }
             Spacer()
-            Text("Join")
+            Text("Connect")
                 .font(.callout)
                 .foregroundStyle(.tint)
         }
@@ -113,8 +124,17 @@ struct JoinPickerView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .onChange(of: importDraft, initial: true) { _, draft in
-                        importError = nil
                         preview = Self.decode(draft)
+                        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        // Desktop parity: an entry that holds something but does
+                        // not verify says why here, rather than leaving no
+                        // preview, no error and a disabled Trust button — which
+                        // reads as the app having ignored the paste. Empty stays
+                        // quiet: nothing has been offered yet.
+                        importError = preview == nil && !trimmed.isEmpty
+                            ? SessionController.validateIdentityCard(trimmed)
+                                ?? "invalid identity card"
+                            : nil
                     }
                 if let importError {
                     Text(importError)

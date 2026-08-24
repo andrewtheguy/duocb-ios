@@ -14,9 +14,10 @@ point — a PIN is short, so possession of it alone must never be enough to
 become a trusted device. Card setup carries no clipboard content and ends as
 soon as the cards have crossed.
 
-Once two devices trust each other, press **Start a connection** on one and
-**Join** on the other, then pick it from the trusted-device list. The join
-retries for a short while, so press Start first if it is not hosting yet.
+Once two devices trust each other, press **Connect to a device** on each and
+pick the other from the trusted-device list. Neither side goes first and
+neither picks a role: duocb decides which device hosts the link from the two
+identity keys, and whichever of you is ready first simply waits for the other.
 
 Cards expire 30 days after they are minted; the private key that signs them
 never does. This device's own card renews itself with that same key; a peer's card that lapses can no longer pair and shows in warning
@@ -90,8 +91,8 @@ mDNSResponder daemon instead, which is why `Info.plist` declares both
 
 3. Run on a device or Simulator. The setup wizard runs on first launch:
    create this device's identity, name it, and the hub appears. Choose **Trade
-   cards** on both devices to pair them, then Start on one and Join on the
-   other.
+   cards** on both devices to pair them, then press **Connect to a device** on
+   each and pick the other.
 
 The application private key and the permanent identity suffix live in the
 Keychain (device-only, never synced to iCloud or restored onto another device —
@@ -190,9 +191,9 @@ cd ../duocb && cargo run -p duocb -- --config /tmp/duocb-desktop.json
 Set up both sides (desktop: generate an identity, name it `mac`; app: the same,
 named `phone`), then choose **Trade cards** on both — show the PIN on one, type
 it on the other, and confirm the pairing code reads identically on the two
-screens before importing. After that press Start on the desktop, choose
-Join in the app and tap the `mac_…` row; send text both ways and compare the
-CRC readouts.
+screens before importing. After that press Connect on both — the `phone_…` row
+on the desktop and the `mac_…` row in the app, in either order — and send text
+both ways, comparing the CRC readouts.
 
 `--lan-only` and `--nostr-only` pin the desktop to one channel for the life of
 the process; set the app's Settings channel to match. Forcing them differently

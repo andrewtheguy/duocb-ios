@@ -6,8 +6,8 @@ import SwiftUI
 /// Unlike the old presence-based hub, **nothing runs here.** The trusted-device
 /// list is local state read from this app's own storage — there is no broadcast,
 /// no discovery, and no relay connection — so the hub holds no FFI handle at
-/// all. A runtime instance appears only when the user hosts, joins, or trades
-/// cards.
+/// all. A runtime instance appears only when the user connects to a device or
+/// trades cards.
 struct HubView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: SetupView.Step
@@ -93,15 +93,9 @@ struct HubView: View {
     private var actionsSection: some View {
         Section {
             Button {
-                controller.startHosting()
+                step = .connect
             } label: {
-                Label("Start a connection", systemImage: "antenna.radiowaves.left.and.right")
-            }
-            .disabled(controller.peers.isEmpty)
-            Button {
-                step = .join
-            } label: {
-                Label("Join a device", systemImage: "personalhotspot")
+                Label("Connect to a device", systemImage: "personalhotspot")
             }
             .disabled(controller.peers.isEmpty)
         } header: {
@@ -110,15 +104,15 @@ struct HubView: View {
             if controller.peers.isEmpty {
                 Text("""
                     No trusted devices yet. Trade cards with your other device \
-                    below — after that, one side starts a connection and the \
-                    other joins it.
+                    below — after that, each of you picks the other and presses \
+                    Connect.
                     """)
             } else {
                 Text("""
-                    Start makes this device host the connection; the other device \
-                    joins it. Join lists the devices you trust and connects to \
-                    the one that started. The join retries for a short while, so \
-                    press Start on the other device if it isn't hosting yet.
+                    Pick the device you want to share with, and have it pick this \
+                    one. Neither side has to go first or agree who hosts — duocb \
+                    settles that from the two identity keys, and whoever is ready \
+                    first waits for the other.
                     """)
             }
         }
@@ -133,7 +127,7 @@ struct HubView: View {
             }
             if !controller.peers.isEmpty {
                 Button {
-                    step = .join
+                    step = .connect
                 } label: {
                     Label(
                         "Trusted devices (\(controller.peers.count))",

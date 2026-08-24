@@ -92,10 +92,18 @@ struct SessionView: View {
                     Text(identity).font(.system(.footnote, design: .monospaced))
                 }
             }
-            if let joined = controller.joinedPeer {
-                LabeledContent("Joining") {
-                    Text(joined).font(.system(.footnote, design: .monospaced))
+            if let peer = controller.sessionPeer {
+                LabeledContent("With") {
+                    Text(peer).font(.system(.footnote, design: .monospaced))
                 }
+            }
+            // Which device is setting the link up. Shown because it explains
+            // what the status line is waiting for, not because anything here
+            // can change it.
+            if let note = controller.sessionRoleNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             if let peer = controller.peerNodeID {
                 LabeledContent("Peer") {
