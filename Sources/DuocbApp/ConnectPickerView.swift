@@ -68,6 +68,15 @@ struct ConnectPickerView: View {
                 } label: {
                     peerRow(peer)
                 }
+                // A lapsed card cannot pair either way round, and the hosting
+                // half fails silently at that — it simply publishes no record,
+                // which reads as a peer that never turned up. The row says the
+                // date and the footer says the remedy; tapping it would only
+                // start a session that can never connect.
+                .disabled(peer.info.expired)
+                // Applied outside the disable so stopping trusting an expired
+                // device — the one thing still worth doing to that row — stays
+                // available.
                 .swipeActions(edge: .trailing) {
                     Button("Remove", role: .destructive) { pendingRemoval = peer }
                 }
@@ -115,8 +124,17 @@ struct ConnectPickerView: View {
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     .onChange(of: importDraft, initial: true) { _, draft in
-                        importError = nil
                         preview = Self.decode(draft)
+                        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        // Desktop parity: an entry that holds something but does
+                        // not verify says why here, rather than leaving no
+                        // preview, no error and a disabled Trust button — which
+                        // reads as the app having ignored the paste. Empty stays
+                        // quiet: nothing has been offered yet.
+                        importError = preview == nil && !trimmed.isEmpty
+                            ? SessionController.validateIdentityCard(trimmed)
+                                ?? "invalid identity card"
+                            : nil
                     }
                 if let importError {
                     Text(importError)
