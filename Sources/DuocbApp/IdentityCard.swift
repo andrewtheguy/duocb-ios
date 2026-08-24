@@ -44,12 +44,17 @@ struct IdentityCardInfo: Equatable {
     let npub: String
     /// Human-comparable digest of `publicKey`, e.g. "A1B2 C3D4 …".
     let fingerprint: String
-    let createdAt: UInt64
-    let expiresAt: UInt64
+    /// The signed validity window: the card is usable only while the local
+    /// clock is inside [notBefore, notAfter).
+    let notBefore: UInt64
+    let notAfter: UInt64
     let remainingSecs: UInt64
-    /// Trust has lapsed: both sides refuse to pair on this card, and the only
-    /// way back is a fresh one from its owner.
+    /// The local clock is outside the window, on either side: both sides
+    /// refuse to pair on this card.
     let expired: Bool
+    /// The early side of `expired`: the window has not opened yet, which means
+    /// a clock is wrong on one of the two devices, not that the card is stale.
+    let notYetValid: Bool
     /// Advisory, and only meaningful for this device's *own* card: less than a
     /// week of life left, so re-mint it before handing it out again.
     let needsRenewal: Bool
@@ -84,19 +89,26 @@ struct IdentityCardInfo: Equatable {
             publicKey: publicKey,
             npub: object["npub"] as? String ?? "",
             fingerprint: object["fingerprint"] as? String ?? "",
-            createdAt: (object["created_at"] as? NSNumber)?.uint64Value ?? 0,
-            expiresAt: (object["expires_at"] as? NSNumber)?.uint64Value ?? 0,
+            notBefore: (object["not_before"] as? NSNumber)?.uint64Value ?? 0,
+            notAfter: (object["not_after"] as? NSNumber)?.uint64Value ?? 0,
             remainingSecs: (object["remaining_secs"] as? NSNumber)?.uint64Value ?? 0,
             expired: object["expired"] as? Bool ?? false,
+            notYetValid: object["not_yet_valid"] as? Bool ?? false,
             needsRenewal: object["needs_renewal"] as? Bool ?? false
         )
     }
 
-    var expiryDate: Date { Date(timeIntervalSince1970: TimeInterval(expiresAt)) }
+    var expiryDate: Date { Date(timeIntervalSince1970: TimeInterval(notAfter)) }
+    var validFromDate: Date { Date(timeIntervalSince1970: TimeInterval(notBefore)) }
 
     /// The expiry line shown under a trusted-device row, matching the desktop's
-    /// wording — "expires 2026-09-13", or "expired" once it has lapsed.
+    /// wording — "expires 2026-09-13", "expired" once it has lapsed, or a
+    /// clock warning when the signed window has not opened yet: a fresh card
+    /// would fail the same way, so the user is pointed at the clock instead.
     var expiryText: String {
+        if notYetValid {
+            return "not yet valid from \(Self.dayFormatter.string(from: validFromDate)) — check this device's clock"
+        }
         if expired { return "expired" }
         return "expires \(expiryDateText)"
     }
