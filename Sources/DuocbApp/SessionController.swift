@@ -813,8 +813,13 @@ final class SessionController {
             phase = .failed("Set up this device's identity first")
             return false
         }
+        guard let irohSecret = IrohKeyStore.shared else {
+            phase = .failed("could not mint this device's transport key")
+            return false
+        }
         var configJSON: [String: Any] = [
             "role": role.rawValue,
+            "iroh_secret": irohSecret,
             "self_card": selfCard,
             "channel": config.channel.rawValue,
         ]

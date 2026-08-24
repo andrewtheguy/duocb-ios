@@ -7,6 +7,8 @@ import Foundation
 enum DuocbBuffer {
     static let identity = 128
     static let suffix = 16
+    /// `duocb_generate_iroh_secret`'s 64 hex characters.
+    static let irohSecret = 128
     static let name = 64
     static let publicKey = 128
     static let fingerprint = 64
