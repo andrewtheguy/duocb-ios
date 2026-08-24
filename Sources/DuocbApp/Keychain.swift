@@ -1,15 +1,17 @@
 import Foundation
 import Security
+import UIKit
 
-/// The two things this app keeps in the Keychain: the application private key
-/// (`IdentityStore`) and this device's permanent name suffix (`SuffixStore`).
+/// The three things this app keeps in the Keychain: the application private
+/// key (`IdentityStore`), this device's permanent name suffix (`SuffixStore`)
+/// and its iroh transport key (`IrohKeyStore`).
 ///
 /// Everything else — the device name, this device's signed self-card, and the
 /// trusted peers' cards — lives in an ordinary JSON file (`ConfigStore`).
 /// Cards are public by design: a card is the thing you hand out, and it carries
 /// no private key, so the Keychain would buy nothing for them.
 ///
-/// Accessibility is `…AfterFirstUnlockThisDeviceOnly` for both items: readable
+/// Accessibility is `…AfterFirstUnlockThisDeviceOnly` for every item: readable
 /// after the first unlock following a boot (so a session survives
 /// backgrounding), never synced to iCloud, and never restored onto another
 /// device. That last part is the point — an application identity *is* this
@@ -89,8 +91,8 @@ enum Keychain {
 /// This installation's application private key (NIP-19 `nsec`), the credential
 /// that signs its identity card and authenticates the wire protocol.
 ///
-/// Deliberately unrelated to iroh's transport key, which is ephemeral and never
-/// persisted anywhere.
+/// Deliberately unrelated to iroh's transport key (`IrohKeyStore`), which is
+/// never a credential.
 enum IdentityStore {
     private static let service = "com.andrewtheguy.duocb.identitySecret"
 
@@ -131,5 +133,55 @@ enum SuffixStore {
         let suffix = String(cString: buf)
         guard Keychain.save(suffix, service: service) else { return nil }
         return suffix
+    }
+}
+
+/// This device's iroh transport key, the secret behind its node id.
+///
+/// The desktop mints this fresh on every launch because a config directory can
+/// be copied between machines, and two live endpoints presenting one node id
+/// would shadow each other on the relays. An iOS app's storage cannot be
+/// cloned that way — the Keychain item is this-device-only and never restored
+/// from a backup onto another device — so here it is minted once and reused,
+/// and the node id survives relaunches. As a second guard it is stored
+/// together with `identifierForVendor`: a key found under a different vendor
+/// id (a reinstall after every app from this vendor was removed) is discarded
+/// and a fresh one minted.
+///
+/// Read once per process (`shared`), so every session this process starts
+/// passes the same key; the FFI refuses a different one anyway.
+enum IrohKeyStore {
+    private static let service = "com.andrewtheguy.duocb.irohSecret"
+    /// Stored form: `<vendor id>:<64 hex chars>`.
+    private static let separator: Character = ":"
+
+    /// The key every `duocb_start` in this process passes as `iroh_secret`.
+    /// Resolved on first use and never re-read.
+    static let shared: String? = loadOrCreate()
+
+    private static func loadOrCreate() -> String? {
+        let vendor = UIDevice.current.identifierForVendor?.uuidString
+        if let stored = Keychain.load(service: service),
+           let split = stored.firstIndex(of: separator)
+        {
+            let storedVendor = String(stored[..<split])
+            let secret = String(stored[stored.index(after: split)...])
+            if let vendor, storedVendor == vendor, !secret.isEmpty {
+                return secret
+            }
+        }
+        var buf = [CChar](repeating: 0, count: DuocbBuffer.irohSecret)
+        guard duocb_generate_iroh_secret(&buf, buf.count) == 1 else {
+            return nil // the buffer is ample and never NULL, so this is a bug
+        }
+        let secret = String(cString: buf)
+        // No vendor id (it can be nil right after a reboot, before the device
+        // is unlocked): use the fresh key for this run but do not persist it —
+        // the next launch will have the id and mint the one that sticks.
+        guard let vendor else { return secret }
+        guard Keychain.save("\(vendor)\(separator)\(secret)", service: service) else {
+            return secret
+        }
+        return secret
     }
 }

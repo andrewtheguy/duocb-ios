@@ -82,9 +82,10 @@ struct HubView: View {
             Text("""
                 Give another device this card and it will trust you. Cards last \
                 30 days and renew themselves here, so copy a fresh one if the \
-                other device says yours has expired. The fingerprint is this \
-                device's half of the pairing code shown when trading cards, and \
-                it does not change when the card renews.
+                other device says yours has expired. Your private key never \
+                expires — a renewal is the same key signing a new card. The \
+                fingerprint is this device's half of the pairing code shown when \
+                trading cards, and it does not change when the card renews.
                 """)
         }
     }
