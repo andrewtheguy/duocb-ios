@@ -31,7 +31,7 @@ extension SessionController.Phase {
         case .authenticating: "Authenticating…"
         case .connected: "Connected"
         case .reconnecting(let attempt, let max): "Reconnecting… (attempt \(attempt) of \(max))"
-        case .failed(let message): "Failed: \(message)"
+        case .failed: "Disconnected"
         }
     }
 }
