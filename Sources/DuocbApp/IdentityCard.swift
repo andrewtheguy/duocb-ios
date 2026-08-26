@@ -44,8 +44,8 @@ struct IdentityCardInfo: Equatable {
     let npub: String
     /// Human-comparable digest of `publicKey`, e.g. "A1B2 C3D4 …".
     let fingerprint: String
-    /// The signed validity window: the card is usable only while the local
-    /// clock is inside [notBefore, notAfter).
+    /// The signed validity window. Current-use checks allow five minutes of
+    /// clock-skew grace before `notBefore` and stop at `notAfter`.
     let notBefore: UInt64
     let notAfter: UInt64
     let remainingSecs: UInt64
@@ -151,8 +151,8 @@ struct TrustedPeer: Identifiable, Equatable {
 /// channel underneath itself. **Both devices must be reachable on a channel
 /// they share.**
 enum SignalChannel: String, CaseIterable, Codable {
-    /// The default: local network first, nostr relays as fallback. Sub-second
-    /// for two devices in one room, and still reaches a device elsewhere.
+    /// The default: local network first, nostr relays as fallback. The host
+    /// publishes on both while the dialer performs the lookups sequentially.
     case lanThenNostr = "lan_then_nostr"
     /// No third-party server at all — a pair of devices with no internet still
     /// works. Needs the Local Network permission.
@@ -172,8 +172,11 @@ enum SignalChannel: String, CaseIterable, Codable {
         switch self {
         case .lanThenNostr:
             """
-            Finds your other device on the same network first and falls back to \
-            relay servers, so it works in the same room and across the internet.
+            The host publishes on the local network and relay servers. The \
+            dialer tries the local network first, then relays; choose Local \
+            network only when no third-party server may be contacted. Clipboard-\
+            session relay events expose both devices' application public keys \
+            as metadata even though the connection id is encrypted.
             """
         case .lanOnly:
             """

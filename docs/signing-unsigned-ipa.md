@@ -4,10 +4,9 @@ The prerelease `duocb-unsigned.ipa` contains a device build with no code
 signature or embedded provisioning profile. It cannot be installed until it is
 signed for an Apple developer team.
 
-This guide uses Apple's command-line tools on macOS. The commands were verified
-with a development certificate and profile, followed by installation on a
-registered physical iPhone. They assume the current app layout, which has no
-app extensions or embedded dynamic frameworks that require separate signatures.
+This guide uses Apple's command-line tools on macOS and assumes the current app
+layout, which has no app extensions or embedded dynamic frameworks that require
+separate signatures.
 
 ## Requirements
 
@@ -128,10 +127,6 @@ if [[ "$PROFILE_APP_ID" != "$APP_ID_PREFIX.$BUNDLE_ID" ]]; then
 fi
 
 printf 'Profile team: %s\n' "$TEAM_ID"
-
-plutil -extract Entitlements xml1 \
-  -o "$ENTITLEMENTS_PLIST" \
-  "$PROFILE_PLIST"
 ```
 
 Before continuing, confirm the profile is unexpired and includes the intended
@@ -144,7 +139,41 @@ plutil -extract ProvisionedDevices xml1 -o - "$PROFILE_PLIST"
 
 Use `xcrun devicectl device info details --device DEVICE_ID` to find the
 device's hardware `udid` when the CoreDevice identifier and hardware UDID are
-different.
+different. From a duocb-ios checkout, `scripts/list-devices-ios.sh` prints both
+values side by side.
+
+The profile's `Entitlements` dictionary is an authorization allowlist, not the
+exact set an app should claim. In particular, profile values may contain
+wildcards that do not belong in a code signature. Create the minimal entitlement
+set this app uses instead: its application/team identifiers, default Keychain
+access group, and the profile's debugging policy. This distinction is described
+in Apple's [provisioning-profile technote](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles).
+
+```bash
+/usr/bin/plutil -create xml1 "$ENTITLEMENTS_PLIST"
+/usr/libexec/PlistBuddy \
+  -c "Add :application-identifier string $PROFILE_APP_ID" \
+  -c "Add :com.apple.developer.team-identifier string $TEAM_ID" \
+  -c "Add :keychain-access-groups array" \
+  -c "Add :keychain-access-groups:0 string $PROFILE_APP_ID" \
+  "$ENTITLEMENTS_PLIST"
+
+GET_TASK_ALLOW="$(
+  plutil -extract Entitlements.get-task-allow raw -o - \
+    "$PROFILE_PLIST" 2>/dev/null || printf false
+)"
+case "$GET_TASK_ALLOW" in
+  true|false)
+    /usr/libexec/PlistBuddy \
+      -c "Add :get-task-allow bool $GET_TASK_ALLOW" \
+      "$ENTITLEMENTS_PLIST"
+    ;;
+  *)
+    echo "error: profile has an invalid get-task-allow entitlement" >&2
+    exit 1
+    ;;
+esac
+```
 
 ## 4. Embed the profile and sign
 
@@ -173,7 +202,7 @@ Strictly verify the signed bundle and inspect its Team ID and entitlements:
 
 ```bash
 codesign --verify --deep --strict --verbose=4 "$APP_PATH"
-codesign --display --verbose=4 --entitlements :- "$APP_PATH"
+codesign --display --verbose=4 --entitlements - --xml "$APP_PATH"
 ```
 
 The displayed `TeamIdentifier`, `application-identifier`, bundle ID, profile,

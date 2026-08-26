@@ -1,7 +1,8 @@
 # duocb-ios
 
 iOS peer of [duocb](https://github.com/andrewtheguy/duocb) — P2P clipboard-text
-sharing between two devices you own, over iroh QUIC with nostr-relay discovery.
+sharing between two devices you own, over iroh QUIC with Bonjour/DNS-SD
+discovery and Nostr-relay fallback.
 
 Every device holds **its own application keypair** and a signed identity card
 naming `<short-name>_<permanent-suffix>` — there is no shared secret to copy
@@ -20,18 +21,22 @@ neither picks a role: duocb decides which device hosts the link from the two
 identity keys, and whichever of you is ready first simply waits for the other.
 
 Cards expire 30 days after they are minted; the private key that signs them
-never does. This device's own card renews itself with that same key; a peer's card that lapses can no longer pair and shows in warning
-colour until that device hands over a fresh one. You can also paste a card
-directly, which is the same trust decision checked against the fingerprint on
-its trusted-device row.
+never does. At launch, this device renews its own card with the same key once
+less than seven days remain. A peer's card that lapses can no longer pair and
+shows in warning colour until that device hands over a fresh one. You can also paste a card
+directly, check its previewed fingerprint, and trust it without a network card
+setup; the same fingerprint then appears on its trusted-device row.
 
 A **channel** setting picks how the two devices find each other. It governs
 card setup and clipboard sessions alike, so **both devices must be set to a
 channel they share**:
 
-- **Local network, then internet** (default) — looks on the local network
-  first and falls back to relay servers. Sub-second in the same room, and
-  still works across networks.
+- **Local network, then internet** (default) — the dialer looks on the local
+  network first and falls back to relay servers. The host publishes its
+  encrypted rendezvous record on both channels, so use Local network only when
+  no relay may be contacted. For clipboard sessions, the encrypted payload
+  hides the node id, but the Nostr event still exposes the host and intended
+  peer application public keys as metadata.
 - **Local network only** — no third-party server and no internet needed, but
   both devices must be on the same network. The rendezvous is a Bonjour
   service registered through the system's mDNSResponder daemon (no multicast
@@ -94,13 +99,16 @@ mDNSResponder daemon instead, which is why `Info.plist` declares both
    cards** on both devices to pair them, then press **Connect to a device** on
    each and pick the other.
 
-The application private key and the permanent identity suffix live in the
-Keychain (device-only, never synced to iCloud or restored onto another device —
-an identity *is* this installation). The device name, this device's signed
-card, the trusted peers' cards and the channel choice live in a JSON file in
-Application Support; cards are public by design, so the Keychain buys them
-nothing. **Reset identity** in Settings starts over with a fresh keypair and an
-empty trusted list; the permanent suffix survives it.
+The application private key, permanent identity suffix, and iroh transport key
+live in the Keychain with this-device-only accessibility, so they are neither
+synced through iCloud Keychain nor restored automatically onto another device.
+The application private key can be copied manually to recover that key on a
+replacement phone; the suffix and trusted-device list are not part of that
+backup. The device name, this device's signed card, trusted peers' cards, and
+channel choice live in a JSON file in Application Support; cards are public by
+design, so the Keychain buys them nothing. **Reset identity** in Settings starts
+over with a fresh application keypair and an empty trusted list; the permanent
+suffix and independently managed iroh transport key survive it.
 
 The xcframework is arm64-only, so pin an arm64 Simulator explicitly when
 building from the CLI:
@@ -167,8 +175,8 @@ SPM forbids binary-target paths outside the package root, so the sibling's
 ## Scripts
 
 - `scripts/bump-xcframework.sh [tag]` — repoint `Packages/Duocb/Package.swift`
-  at a duocb release (downloads the zip, computes the SPM checksum, rewrites
-  url + checksum; defaults to the latest release).
+  at a duocb release, update `MARKETING_VERSION`, and regenerate the Xcode
+  project when XcodeGen is available (defaults to the latest release).
 - `scripts/create-archive-ios.sh` — Release `.xcarchive` + exported `.ipa`
   into `build/`, signed with the team and bundle ID from
   `Developer.local.xcconfig`.
@@ -196,9 +204,10 @@ on the desktop and the `mac_…` row in the app, in either order — and send te
 both ways, comparing the CRC readouts.
 
 `--lan-only` and `--nostr-only` pin the desktop to one channel for the life of
-the process; set the app's Settings channel to match. Forcing them differently
-— a `--nostr-only` desktop against a default app — is what exercises the relay
-fallback.
+the process; set the app's Settings channel to one it shares. To exercise the
+default channel's LAN-to-relay fallback, make the default-configured device the
+dialer and the other device Nostr-only; if key order assigns the roles the other
+way around, swap which device carries the override.
 
 ## CI from a Linux checkout
 

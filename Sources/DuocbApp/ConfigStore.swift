@@ -1,18 +1,19 @@
 import Foundation
 
-/// The non-secret half of this installation's state, mirroring the desktop
-/// config file (crates/duocb/src/config.rs): the device name, this device's
-/// signed self-card, and the trusted peers' cards.
+/// The non-secret half of this installation's state: the device name, this
+/// device's signed self-card, trusted peers' cards, and the saved channel.
+/// Shared fields mirror the desktop config (`crates/duocb/src/config.rs`).
 ///
 /// A file rather than UserDefaults because the peer list is a structured list
 /// that grows to 128 entries, and a file rather than the Keychain because none
-/// of it is secret — a card is the thing you hand out. The two actual secrets,
-/// the application private key and the permanent suffix, are in the Keychain
-/// (see `Keychain.swift`).
+/// of it is secret — a card is the thing you hand out. The application private
+/// key, permanent suffix, and iroh transport key are in the Keychain (see
+/// `Keychain.swift`).
 ///
 /// The desktop's `identity_secret` and `device_suffix` fields are deliberately
-/// absent here for that reason; everything else lines up field for field, under
-/// the same snake_case names, so the two are readable side by side.
+/// absent here for that reason. Shared fields use the same snake_case names;
+/// `channel` is iOS-only persisted state because the desktop chooses it at
+/// launch.
 struct DuocbConfig: Codable, Equatable {
     var version: Int
     var myName: String?
@@ -52,8 +53,8 @@ struct DuocbConfig: Codable, Equatable {
         self.channel = channel
     }
 
-    /// Tolerant of *missing* keys — a file truncated by a full disk, or one
-    /// edited by hand, still yields the fields it does carry rather than
+    /// Tolerant of *missing optional* keys in otherwise valid JSON — a file
+    /// edited by hand still yields the fields it does carry rather than
     /// throwing away a trusted-device list over an absent `channel`.
     ///
     /// Tolerance stops at the shape: `version` is checked against

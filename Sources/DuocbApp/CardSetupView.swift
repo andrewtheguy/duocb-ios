@@ -7,8 +7,8 @@ import SwiftUI
 /// rotating PIN authenticates a short-lived connection, the two devices swap
 /// signed identity cards across it, and the session ends. Which channel carries
 /// the rendezvous comes from Settings and governs both devices' halves, so
-/// **both must be set to a channel they share** — unlike the old quick-pair
-/// PINs, the channel is not encoded in the code itself.
+/// **both must be set to a channel they share**; the channel is not encoded in
+/// the PIN.
 struct CardSetupView: View {
     @Environment(SessionController.self) private var controller
     @Binding var step: SetupView.Step
@@ -350,8 +350,8 @@ struct CardConfirmView: View {
                 } footer: {
                     Text("""
                         Importing adds this device to the trusted list. Do the \
-                        same on the other device, then use Start and Join on \
-                        the home screen to share the clipboard.
+                        same on the other device, then select each other with \
+                        Connect on both home screens to share the clipboard.
                         """)
                 }
             }

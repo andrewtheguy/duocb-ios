@@ -70,8 +70,8 @@ struct ConnectPickerView: View {
                 }
                 // A lapsed card cannot pair either way round, and the hosting
                 // half fails silently at that — it simply publishes no record,
-                // which reads as a peer that never turned up. The row says the
-                // date and the footer says the remedy; tapping it would only
+                // which reads as a peer that never turned up. The row marks the
+                // expiry and the footer says the remedy; tapping it would only
                 // start a session that can never connect.
                 .disabled(peer.info.expired)
                 // Applied outside the disable so stopping trusting an expired

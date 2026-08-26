@@ -55,7 +55,7 @@
 	     resolves, which reads like a network problem.
 	       _duocb-pin._udp   the card-setup PIN rendezvous (trading cards)
 	       _duocb-host._udp  the pairwise hosting record a clipboard session is
-	                         found through — LAN-first, with nostr as fallback
+	                         found through — the dialer tries LAN before nostr
 	     ci/ci.sh's `unsigned` job asserts both are present in the built app. -->
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>duocb uses the local network to find your other device when trading cards and when sharing the clipboard, and to connect the two devices directly.</string>

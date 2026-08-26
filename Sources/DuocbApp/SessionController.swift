@@ -787,10 +787,10 @@ final class SessionController {
 
     /// Resume after a failure. A parked session (it ended on its own but the
     /// runtime was kept alive — see `fail`) resumes on the same runtime via
-    /// `duocb_reconnect`, which reuses the session identity: the same node id
-    /// dials the same pinned target, so an already-paired peer accepts it
-    /// without re-pairing or a fresh PIN. Only when no runtime is left does
-    /// this fall back to a full restart with a fresh identity.
+    /// `duocb_reconnect`, retaining its node id and matching server-side session
+    /// memory while resolving the original target again. When no runtime is
+    /// left, this starts a new one with the persisted application and iroh
+    /// identities but empty transient session memory.
     func reconnect() {
         if let handle, !stopping, duocb_reconnect(handle) == 0 {
             lastError = nil
@@ -943,12 +943,11 @@ final class SessionController {
     }
 
     /// Surface a session failure. A failed session whose runtime is still alive
-    /// is *parked*, not stopped: the runtime holds the session identity and
-    /// pairing state (node id, pair claim, pinned dial target) for as long as it
-    /// runs, so keeping it lets Reconnect resume the same pairing where a stop
-    /// plus fresh start would mint a new identity the already-paired peer
-    /// refuses. Stop, or starting anything else, still discards it. Only a
-    /// runtime that actually died is torn down here.
+    /// is *parked*, not stopped, so Reconnect can reuse its node id and matching
+    /// server-side claim/PIN memory. A full stop preserves the persisted
+    /// application and iroh identities but discards that transient session
+    /// memory. Starting anything else still stops it; only a runtime that
+    /// actually died is torn down here immediately.
     private func fail(_ message: String) {
         if let handle, duocb_is_running(handle) == 1 {
             phase = .failed(message)

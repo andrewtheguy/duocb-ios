@@ -3,7 +3,7 @@ import SwiftUI
 /// The configured home hub: this device's identity and card, the actions that
 /// start a session, and the way in to card setup.
 ///
-/// Unlike the old presence-based hub, **nothing runs here.** The trusted-device
+/// **Nothing runs here.** The trusted-device
 /// list is local state read from this app's own storage — there is no broadcast,
 /// no discovery, and no relay connection — so the hub holds no FFI handle at
 /// all. A runtime instance appears only when the user connects to a device or
@@ -81,8 +81,9 @@ struct HubView: View {
         } footer: {
             Text("""
                 Give another device this card and it will trust you. Cards last \
-                30 days and renew themselves here, so copy a fresh one if the \
-                other device says yours has expired. Your private key never \
+                30 days; at launch, this device renews its card once less than \
+                seven days remain. Copy a fresh one if the other device says \
+                yours has expired. Your private key never \
                 expires — a renewal is the same key signing a new card. The \
                 fingerprint is this device's half of the pairing code shown when \
                 trading cards, and it does not change when the card renews.
