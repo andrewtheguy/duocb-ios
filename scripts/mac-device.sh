@@ -38,7 +38,7 @@
 #                           (default: macwork — note this is NOT mac-ci.sh's
 #                           default host: a VM can build and sign but can never
 #                           pair with hardware, so the two are different Macs)
-#   DUOCB_MAC_TMUX          tmux session to type into    (default: ios)
+#   DUOCB_MAC_TMUX          tmux session to type into    (default: macscratch)
 #   DUOCB_MAC_DEVICE        device selector              (default: iPhone)
 #   DUOCB_MAC_ROOT          staging area on the Mac      (default: codes/staging-area)
 set -euo pipefail
@@ -47,7 +47,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO_DIR=$PWD
 
 HOST=${DUOCB_MAC_DEVICE_HOST:-macwork}
-SESSION=${DUOCB_MAC_TMUX:-ios}
+SESSION=${DUOCB_MAC_TMUX:-macscratch}
 REMOTE_ROOT=${DUOCB_MAC_ROOT:-codes/staging-area}
 REMOTE_REPO="$REMOTE_ROOT/duocb-ios"
 # Written fresh on every run and left behind afterwards: when something fails
@@ -84,7 +84,7 @@ options:
   --no-sync           use the tree already on the Mac, do not rsync
   --no-launch         install without launching
   --host ALIAS        ssh alias of the Mac (default: macwork)
-  --session NAME      tmux session to type into (default: ios)
+  --session NAME      tmux session to type into (default: macscratch)
 USAGE
     exit 2
 }

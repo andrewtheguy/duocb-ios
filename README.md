@@ -252,7 +252,7 @@ scripts/mac-device.sh --device iPad --local
 
 The tmux hop is the whole point: that session belongs to a GUI login, so its
 login keychain is unlocked and codesign can read the signing key — the one
-thing `mac-ci.sh` can never do. Start it once on the Mac with `tmux new -s ios`
+thing `mac-ci.sh` can never do. Start it once on the Mac with `tmux new -s macscratch`
 (from Terminal.app, not over ssh, or the keychain is locked there too);
 `doctor` reports whether it is present, idle, and unlocked. A busy pane is
 refused rather than typed into.
