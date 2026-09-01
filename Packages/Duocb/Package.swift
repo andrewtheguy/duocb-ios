@@ -4,7 +4,9 @@ import PackageDescription
 
 // Delivers libduocb.xcframework (built by ../duocb's build-ios.sh, released as
 // libduocb-ios.xcframework.zip) as a binary target. Default: pinned release
-// URL + checksum (bump with scripts/bump-xcframework.sh <tag>). Local FFI dev:
+// URL + checksum (bump with scripts/bump-xcframework.sh <tag>, which also
+// updates the core version the footer shows, project.yml DUOCB_CORE_VERSION;
+// the app's own MARKETING_VERSION is independent and not touched). Local FFI dev:
 // set DUOCB_LOCAL_XCFRAMEWORK=1 (or true) to use the committed symlink
 // local/libduocb.xcframework -> ../duocb/dist/ios/libduocb.xcframework
 // (SPM forbids binary-target paths outside the package root, hence the

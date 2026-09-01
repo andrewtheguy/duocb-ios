@@ -2,16 +2,25 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-/// The app version, in the normal scroll flow at the bottom of home screens.
+/// The app version and the duocb core it links, in the normal scroll flow at
+/// the bottom of home screens. The two move independently: a core bump does
+/// not change the app version, and vice versa.
 struct AppVersionSection: View {
     /// This build's marketing version (`CFBundleShortVersionString`).
     static let appVersion =
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
 
+    /// The pinned libduocb release (`DuocbCoreVersion`, from project.yml's
+    /// DUOCB_CORE_VERSION, kept in step by scripts/bump-xcframework.sh). A
+    /// local FFI build (DUOCB_LOCAL_XCFRAMEWORK) still reports the pinned
+    /// number — the locally built artifact carries no version of its own.
+    static let coreVersion =
+        Bundle.main.object(forInfoDictionaryKey: "DuocbCoreVersion") as? String ?? ""
+
     var body: some View {
         Section {
         } footer: {
-            Text("duocb v\(Self.appVersion)")
+            Text("duocb v\(Self.appVersion) · core \(Self.coreVersion)")
                 .frame(maxWidth: .infinity, alignment: .center)
         }
     }
