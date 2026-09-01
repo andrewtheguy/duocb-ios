@@ -175,8 +175,10 @@ SPM forbids binary-target paths outside the package root, so the sibling's
 ## Scripts
 
 - `scripts/bump-xcframework.sh [tag]` — repoint `Packages/Duocb/Package.swift`
-  at a duocb release, update `MARKETING_VERSION`, and regenerate the Xcode
-  project when XcodeGen is available (defaults to the latest release).
+  at a duocb release, update the `DUOCB_CORE_VERSION` the footer shows, and
+  regenerate the Xcode project when XcodeGen is available (defaults to the
+  latest release). The app's own `MARKETING_VERSION` is independent of the
+  core release; bump it by hand.
 - `scripts/create-archive-ios.sh` — Release `.xcarchive` + exported `.ipa`
   into `build/`, signed with the team and bundle ID from
   `Developer.local.xcconfig`.
