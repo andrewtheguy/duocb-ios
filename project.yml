@@ -89,7 +89,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Sources/DuocbApp/DuocbApp.entitlements
         INFOPLIST_FILE: Sources/DuocbApp/Info.plist
         # The app's own version, independent of the core release it links.
-        MARKETING_VERSION: "0.0.43"
+        MARKETING_VERSION: "0.0.1"
         CURRENT_PROJECT_VERSION: "1"
         # The pinned libduocb release, surfaced in the app's version footer
         # (Info.plist -> DuocbCoreVersion). scripts/bump-xcframework.sh rewrites
